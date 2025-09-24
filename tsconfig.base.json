@@ -1,0 +1,27 @@
+{
+  "compileOnSave": false,
+  "compilerOptions": {
+    "rootDir": ".",
+    "sourceMap": true,
+    "declaration": false,
+    "moduleResolution": "node",
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "importHelpers": true,
+    "target": "es2015",
+    "module": "esnext",
+    "lib": ["es2020", "dom"],
+    "skipLibCheck": true,
+    "skipDefaultLibCheck": true,
+    "baseUrl": ".",
+    "paths": {
+      "@app/database": ["libs/database/src"],
+      "@app/database/*": ["libs/database/src/*"],
+      "@app/email-service": ["libs/email-service/src"],
+      "@app/email-service/*": ["libs/email-service/src/*"],
+      "@app/ndis": ["libs/shared-services/ndis/src"],
+      "@app/ndis/*": ["libs/shared-services/ndis/src/*"]
+    }
+  },
+  "exclude": ["node_modules", "tmp"]
+}

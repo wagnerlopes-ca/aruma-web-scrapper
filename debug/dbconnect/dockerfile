@@ -1,0 +1,18 @@
+# Use the standard Alpine image as a base
+FROM alpine:latest
+
+# Install SSH client
+RUN apk add --no-cache openssh-client
+
+# Copy the SSH key and script into the container
+COPY dev-bastion-key.pem dev-bastion-key.pem
+COPY connect-bastion-host.sh /root/ssh-script.sh
+
+# Set the correct permissions for the SSH key
+RUN chmod 400 dev-bastion-key.pem
+
+# Make the script executable
+RUN chmod +x /root/ssh-script.sh
+
+# Default command to keep the container running
+CMD ["sh", "/root/ssh-script.sh"]

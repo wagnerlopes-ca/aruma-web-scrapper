@@ -1,0 +1,34 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Aruma",
+      "type": "node",
+      "request": "launch",
+      "args": [
+        "apps/apis/aruma/src/main.ts"
+      ],
+      "runtimeArgs": [
+        "--require",
+        "ts-node/register",
+        "--require",
+        "tsconfig-paths/register",
+      ],
+      "cwd": "${workspaceRoot}",
+      "internalConsoleOptions": "openOnSessionStart",
+      "envFile": "${workspaceFolder}/apps/apis/aruma/.env",
+      "env": {
+        "NODE_ENV": "local",
+        "NODE_PORT": "3000",
+        "TS_NODE_PROJECT": "apps/apis/aruma/tsconfig.app.json", // Specify the tsconfig to use
+      },
+      "sourceMaps": true,
+      "console": "internalConsole",
+      "outputCapture": "std",
+      "resolveSourceMapLocations": [
+        "${workspaceFolder}/**",
+        "!**/node_modules/**" // Disable the "could not read source map" error for node_modules
+      ]
+    }
+  ]
+}

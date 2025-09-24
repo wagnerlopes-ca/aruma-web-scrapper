@@ -1,0 +1,53 @@
+{
+  "name": "aruma",
+  "$schema": "../../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "apps/apis/aruma/src",
+  "projectType": "application",
+  "targets": {
+    "build": {
+      "executor": "@nx/webpack:webpack",
+      "outputs": ["{options.outputPath}"],
+      "defaultConfiguration": "production",
+      "options": {
+        "target": "node",
+        "compiler": "tsc",
+        "outputPath": "dist/apps/apis/aruma",
+        "main": "apps/apis/aruma/src/main.ts",
+        "tsConfig": "apps/apis/aruma/tsconfig.app.json",
+        "assets": ["apps/apis/aruma/src/assets"],
+        "webpackConfig": "apps/apis/aruma/webpack.config.js"
+      },
+      "configurations": {
+        "development": {},
+        "production": {}
+      }
+    },
+    "serve": {
+      "executor": "@nx/js:node",
+      "defaultConfiguration": "development",
+      "options": {
+        "buildTarget": "aruma:build"
+      },
+      "configurations": {
+        "development": {
+          "buildTarget": "aruma:build:development"
+        },
+        "production": {
+          "buildTarget": "aruma:build:production"
+        }
+      }
+    },
+    "lint": {
+      "executor": "@nx/eslint:lint",
+      "outputs": ["{options.outputFile}"]
+    },
+    "test": {
+      "executor": "@nx/jest:jest",
+      "outputs": ["{workspaceRoot}/coverage/{projectRoot}"],
+      "options": {
+        "jestConfig": "apps/apis/aruma/jest.config.ts"
+      }
+    }
+  },
+  "tags": []
+}

@@ -1,0 +1,34 @@
+{
+  "projects": {
+    "email-service": {
+      "type": "library",
+      "root": "libs/email-service",
+      "entryFile": "index",
+      "sourceRoot": "libs/email-service/src",
+      "compilerOptions": {
+        "tsConfigPath": "libs/email-service/tsconfig.lib.json"
+      }
+    },
+    "database": {
+      "type": "library",
+      "root": "libs/database",
+      "entryFile": "index",
+      "sourceRoot": "libs/database/src",
+      "compilerOptions": {
+        "tsConfigPath": "libs/database/tsconfig.lib.json"
+      }
+    },
+    "ndis": {
+      "type": "library",
+      "root": "libs/shared-services/ndis",
+      "entryFile": "index",
+      "sourceRoot": "libs/shared-services/ndis/src",
+      "compilerOptions": {
+        "tsConfigPath": "libs/shared-services/ndis/tsconfig.lib.json"
+      }
+    }
+  },
+  "compilerOptions": {
+    "webpack": true
+  }
+}
