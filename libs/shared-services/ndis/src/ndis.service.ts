@@ -175,6 +175,7 @@ export class NDISService implements NDISInterface {
       ...extraHeaders,
       'X-IBM-Client-Id': clientId,
       accept: 'application/json',
+      'content-type': 'application/json',
       authorization: authorizationToken
     }
 

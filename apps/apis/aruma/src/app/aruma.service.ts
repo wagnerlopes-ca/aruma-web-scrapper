@@ -103,7 +103,11 @@ export class ArumaService {
           errorList = await response.text();
         }
 
-        throw new HttpException(errorList, response.status);
+        return {
+          success: false,
+          result: undefined,
+          errors: errorList,
+        };
       }
 
       const result = await response.json();
@@ -141,11 +145,6 @@ export class ArumaService {
               clientName
             }
           }
-        );
-
-        throw new HttpException(
-          formattedError,
-          HttpStatus.INTERNAL_SERVER_ERROR,
         );
       }
     }
