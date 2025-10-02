@@ -36,8 +36,7 @@ export class ArumaController {
 
   @UseGuards(AuthBearerGuard)
   @Post('/')
-  async post(@Body() body: RequestDto, @Req() request: Request) {
-    console.log('Test');
-    return { success: true }
+  async init() {
+    this.arumaService.initWebScrapper();
   }
 }

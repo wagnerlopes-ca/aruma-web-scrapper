@@ -10,8 +10,7 @@ import { ResponseDto } from './dto/response.dto';
 import { NotificationsService } from './notifications/notifications.service';
 import { ConfigService } from '@nestjs/config';
 import { DeviceUsersService } from './device-users/device-users.service';
-
-const BASE_URL = '/aruma/v1/';
+import { EnvConstants } from '../../env/env-constants';
 
 @Injectable()
 export class ArumaService {
@@ -25,63 +24,12 @@ export class ArumaService {
     private readonly deviceUserService: DeviceUsersService
   ) { }
 
-  public async subscribeToNotification(
-    request: Request,
-    deviceName: string,
-    clientName: string,
-    eventId: string,
-    frequency: string
-  ) {
-    const body = await this.notificationsService.getNotificationSubscriptionBody(
-      eventId,
-      frequency,
-      deviceName
-    );
-
-    const requestUrl = request.url.replace('-all', '');
-
-    const headers = { ...request.headers };
-
-    const result = await this.defaultRequest(
-      requestUrl,
-      request.method,
-      body,
-      headers,
-      null,
-      deviceName,
-      clientName,
-      true
-    );
-
-    return result;
-  }
-
   public async stopIfOutage() {
     return this.plannedOutagesService.stopIfOutage();
   }
 
   private isBlank(value: unknown): boolean {
     return value === null || value === undefined || value === '';
-  }
-
-  public async stopIfClientWebhookNotConfigured(deviceName: string) {
-    const deviceUser = await this.deviceUserService.findOne(deviceName);
-
-    if (this.isBlank(deviceUser.WebhookUrl) || this.isBlank(deviceUser.WebhookBasicAuth)) {
-      const errorPayload = {
-        success: false,
-        errors: [
-          `Client webhook not configured for device: ${deviceName}`,
-          `Configure your webhook using POST /notifications/webhook before subscribing to notifications.`
-        ]
-      }
-      this.logger.error(errorPayload);
-
-      throw new HttpException(
-        errorPayload,
-        422
-      );
-    }
   }
 
   public async sendRequest(
@@ -134,19 +82,9 @@ export class ArumaService {
       //and stop the request
       await this.stopIfOutage();
 
-      const requestUrl = url.replace(BASE_URL, '');
-
-      //Removing undesired headers
-      delete headers['host'];
-      delete headers['user-agent'];
-      delete headers['content-length'];
-      delete headers['x-forwarded-for'];
-      delete headers['x-forwarded-proto'];
-      delete headers['x-forwarded-port'];
-
       const response = await this.sendRequest(
         method,
-        requestUrl,
+        url,
         headers,
         body,
         deviceName,
@@ -218,7 +156,7 @@ export class ArumaService {
       const response = error.getResponse();
       let errorList;
 
-      if(typeof response === 'string') {
+      if (typeof response === 'string') {
         try {
           errorList = await JSON.parse(response);
         } catch (e) {
@@ -258,5 +196,31 @@ export class ArumaService {
         }
       }
     }
+  }
+
+  async initWebScrapper() {
+    const url = '3.0/notifications/report';
+    const method = 'POST';
+    const body = { event_id: "SB_REPORT" }
+    const headers = null;
+    const queryObject = null;
+    const clientName = "Aruma";
+    const saveTransaction = false;
+
+    const devicesListString: string = this.configService.get(EnvConstants.DEVICES_LIST);
+    const deviceList: string[] = JSON.parse(devicesListString);
+
+    deviceList.forEach(deviceName => {
+      this.defaultRequest(
+        url,
+        method,
+        body,
+        headers,
+        queryObject,
+        deviceName,
+        clientName,
+        saveTransaction
+      )
+    });
   }
 }
