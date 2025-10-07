@@ -210,7 +210,7 @@ export class ArumaService {
     const deviceList: string[] = JSON.parse(devicesListString);
 
     deviceList.forEach(deviceName => {
-      this.defaultRequest(
+     this.defaultRequest(
         url,
         method,
         body,

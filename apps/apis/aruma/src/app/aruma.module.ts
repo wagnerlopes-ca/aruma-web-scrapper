@@ -16,6 +16,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { ArumaController } from './aruma.controller';
 import { ArumaService } from './aruma.service';
 import { validateMethod } from '../../env/env.validation';
+import { ScheduleModule } from '@nestjs/schedule';
+import { BatchInitiatorService } from './BatchInitiatorService';
 
 @Module({
   imports: [
@@ -49,6 +51,7 @@ import { validateMethod } from '../../env/env.validation';
         };
       },
     }),
+    ScheduleModule.forRoot(),
   ],
   controllers: [AuthController, ArumaController],
   providers: [
@@ -58,6 +61,7 @@ import { validateMethod } from '../../env/env.validation';
     AuthService,
     DeviceUsersService,
     NotificationsService,
+    BatchInitiatorService
   ],
   exports: [],
 })
