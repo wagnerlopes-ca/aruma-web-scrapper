@@ -252,45 +252,32 @@ export class ArumaService {
     const provider = device?.provider ?? '';
 
     // 4. Build filename
-    const timestamp = format(new Date(), 'yyyyMMddHHmmss');
     const fileName = `SBDownload_${deviceName}.csv`;
     const csvFilePath = path.join(partialCsvsFolder, fileName);
-
-    // 5. Translate booking_type codes
-    const translateBookingType = (code: string) => {
-      switch (code) {
-        case 'ZSAG':
-          return 'Standard Booking';
-        case 'ZPLM':
-          return 'Plan Managed';
-        default:
-          return code;
-      }
-    };
 
     // 6. Extract data rows from payload
     const rows = (payload.response?.report_data || []).map((r: any) => ({
       participant_name: r.participant_name,
       participant: r.participant,
-      booking_type: translateBookingType(r.booking_type),
+      booking_type: this.translateBookingType(r.booking_type),
       service_booking_id: r.service_booking_id,
       initiated_by: r.initiated_by,
       product_category: r.product_category,
       product_category_item: r.product_category_item,
       quantity: r.quantity,
-      start_date: r.start_date,
-      end_date: r.end_date,
+      start_date: r.start_date + ' 00:00:00.000',
+      end_date: r.end_date + ' 00:00:00.000',
       allocated_amount: r.allocated_amount,
       remaining_amount: r.remaining_amount,
       accrual_amount: r.accrual_amount,
-      last_modified_date: r.last_modified_date,
+      last_modified_date: r.last_modified_date + ' 00:00:00.000',
       virtual_status: r.virtual_status,
       provider: provider,
       status: r.status,
     }));
 
     // 7. Write the JSON copy (optional)
-    const jsonFilePath = path.join(payloadsFolder, `${payload.event_id}_${deviceName}_${timestamp}.json`);
+    const jsonFilePath = path.join(payloadsFolder, `${payload.event_id}_${deviceName}.json`);
     await fs.writeFile(jsonFilePath, JSON.stringify(payload, null, 2), 'utf-8');
 
     // 8. Define CSV writer (headers must match CSV order)
@@ -323,6 +310,7 @@ export class ArumaService {
     console.log(`✅ CSV and JSON saved in ${dateFolder}`);
 
     this.combineCsvsIfReady(devicesList);
+    this.generateServiceBookingsList(device.deviceName, device.portal, payload, devicesList);
 
     return csvFilePath;
   }
@@ -379,7 +367,7 @@ export class ArumaService {
 
       // Write final combined CSV
       const timestamp = format(new Date(), 'yyyyMMddHHmmss');
-      const finalCsvName = `SBDownload_${timestamp}.csv`;
+      const finalCsvName = `ServiceBookingList_${timestamp}.csv`;
       const finalCsvPath = path.join(resultsFolder, finalCsvName);
 
       await fs.writeFile(finalCsvPath, combinedLines.join('\n'), 'utf-8');
@@ -389,6 +377,203 @@ export class ArumaService {
     } finally {
       // Release lock
       await fs.unlink(lockPath).catch(() => { });
+    }
+  }
+
+  async generateServiceBookingsList(
+    deviceName: string,
+    portal: string,
+    sbReportPayload: any,
+    deviceList: DeviceDto[]
+  ): Promise<void> {
+    this.logger.log(`Processing SB_REPORT for ${deviceName} (${portal})...`);
+
+    const storagePath = this.configService.get<string>('STORAGE_PATH');
+    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    const dateFolder = path.join(storagePath, today);
+    const resultsFolder = path.join(dateFolder, 'results');
+    const partialsFolder = path.join(dateFolder, 'partials');
+
+    // 1️⃣ Extract unique participants
+    const participantsMap: Record<string, string> = {};
+    for (const record of sbReportPayload?.response?.report_data || []) {
+      if (record.participant && record.participant_name) {
+        participantsMap[record.participant] = record.participant_name;
+      }
+    }
+
+    const participants = Object.entries(participantsMap).map(([participant, participant_name]) => ({
+      participant,
+      participant_name,
+    }));
+
+    this.logger.log(`Found ${participants.length} unique participants for ${deviceName}.`);
+
+    // 2️⃣ Fetch service bookings (using defaultRequest, throttled at 500ms)
+    const allBookings: any[] = [];
+
+    for (const { participant } of participants) {
+      try {
+        const url = '4.0/service-bookings';
+        const method = 'GET';
+        const body = null;
+        const headers = { participant };
+        const queryObject = null;
+        const clientName = 'Aruma';
+        const saveTransaction = false;
+
+        const response = await this.defaultRequest(
+          url,
+          method,
+          body,
+          headers,
+          queryObject,
+          deviceName,
+          clientName,
+          saveTransaction
+        );
+
+        if (response?.success && Array.isArray(response.result) && response.result.length > 0) {
+          const dateExtracted = format(new Date(), 'yyyy-MM-dd HH:mm:ss.SSS');
+          const translatedRows = response.result.map((result: any) => ({
+            date_last_extracted: dateExtracted,
+            Portal: portal,
+            service_booking_id: result.service_booking_id,
+            booking_type: this.translateBookingType(result.booking_type),
+            participant_name: `${result.participant_name} (${result.participant})`,
+            start_date: this.formatDate(result.start_date),
+            end_date: this.formatDate(result.end_date),
+            last_modified_date: this.formatDate(result.submitted_date),
+            created_by: result.created_by,
+            status: result.status,
+            virtual_status: result.virtual_status,
+          }));
+
+          allBookings.push(...translatedRows);
+        } else {
+          this.logger.warn(`No service bookings found for participant ${participant}`);
+        }
+      } catch (err) {
+        this.logger.error(`Error fetching service bookings for ${participant}: ${err.message}`);
+      }
+
+      // Throttle: wait 500 ms before next participant
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+
+    // 3️⃣ Write partial CSV
+    if (allBookings.length === 0) {
+      this.logger.warn(`No service bookings collected for ${deviceName}.`);
+      return;
+    }
+
+    const csvPath = path.join(partialsFolder, `ServiceBookingList_${deviceName}.csv`);
+    const csvWriter = createObjectCsvWriter({
+      path: csvPath,
+      header: [
+        { id: 'date_last_extracted', title: 'date_last_extracted' },
+        { id: 'Portal', title: 'Portal' },
+        { id: 'service_booking_id', title: 'service_booking_id' },
+        { id: 'booking_type', title: 'booking_type' },
+        { id: 'participant_name', title: 'participant_name' },
+        { id: 'start_date', title: 'start_date' },
+        { id: 'end_date', title: 'end_date' },
+        { id: 'last_modified_date', title: 'last_modified_date' },
+        { id: 'created_by', title: 'created_by' },
+        { id: 'status', title: 'status' },
+        { id: 'virtual_status', title: 'virtual_status' },
+      ],
+    });
+
+    await csvWriter.writeRecords(allBookings);
+    this.logger.log(`Partial CSV created: ${csvPath}`);
+
+    // 4️⃣ Combine if ready
+    await this.createServiceBookingListIfReady(partialsFolder, resultsFolder, deviceList);
+  }
+
+  async createServiceBookingListIfReady(
+    partialsFolder: string,
+    resultsFolder: string,
+    deviceList: DeviceDto[]
+  ) {
+    const lockPath = path.join(resultsFolder, '.combining.lock');
+
+    // Try to acquire lock
+    try {
+      await fs.open(lockPath, 'wx'); // fail if exists
+    } catch (err: any) {
+      if (err.code === 'EEXIST') {
+        console.log('⚠️ Combination already in progress, skipping...');
+        return null;
+      }
+      throw err;
+    }
+
+    try {
+      // List all CSV files in results folder
+      const allFiles = await fs.readdir(partialsFolder);
+      const csvFiles = allFiles.filter((f) => f.endsWith('.csv') && f.startsWith('ServiceBookingList_'));
+
+      // Check if all devices have reported
+      const missingDevices = deviceList.filter(
+        (d: DeviceDto) => !csvFiles.some((f) => f.includes(d.deviceName))
+      );
+
+      if (missingDevices.length > 0) {
+        console.log(`⏳ Waiting for devices: ${missingDevices.join(', ')}`);
+        return null;
+      }
+
+      // Read CSVs and combine
+      const combinedLines: string[] = [];
+      for (let i = 0; i < csvFiles.length; i++) {
+        const csvPath = path.join(partialsFolder, csvFiles[i]);
+        const content = await fs.readFile(csvPath, 'utf-8');
+        const lines = content.split(/\r?\n/).filter((l) => l.trim().length > 0);
+
+        if (i === 0) {
+          // Keep header from first file
+          combinedLines.push(...lines);
+        } else {
+          // Skip header
+          combinedLines.push(...lines.slice(1));
+        }
+      }
+
+      // Write final combined CSV
+      const timestamp = format(new Date(), 'yyyyMMddHHmmss');
+      const finalCsvName = `ServiceBookingList_${timestamp}.csv`;
+      const finalCsvPath = path.join(resultsFolder, finalCsvName);
+
+      await fs.writeFile(finalCsvPath, combinedLines.join('\n'), 'utf-8');
+
+      console.log(`✅ Combined CSV created: ${finalCsvPath}`);
+      return finalCsvPath;
+    } finally {
+      // Release lock
+      await fs.unlink(lockPath).catch(() => { });
+    }
+  }
+
+  private translateBookingType(code: string): string {
+    switch (code) {
+      case 'ZSAG':
+        return 'Standard Booking';
+      case 'ZPLM':
+        return 'Plan Managed';
+      default:
+        return code;
+    }
+  }
+
+  private formatDate(dateStr?: string): string {
+    if (!dateStr) return '';
+    try {
+      const d = new Date(dateStr);
+      return format(d, 'dd/MM/yyyy');
+    } catch {
+      return dateStr;
     }
   }
 }
