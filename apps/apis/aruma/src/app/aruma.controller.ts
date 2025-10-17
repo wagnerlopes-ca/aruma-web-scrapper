@@ -45,12 +45,11 @@ export class ArumaController {
     @Param() params: unknown,
   ) {
     const eventId = request.headers['event_id'] || request.headers['eventid'];
+    const deviceName = params['deviceName'];
 
-    this.notificationsService.sendNotificationToClient(
-      params['deviceName'],
-      body,
-      eventId
-    );
+    if (eventId === 'SB_REPORT' && deviceName != null) {
+      this.arumaService.saveReportAsCsv(body, deviceName);
+    }
 
     this.logger.log(
       {

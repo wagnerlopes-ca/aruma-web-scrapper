@@ -14,8 +14,9 @@ export class BatchInitiatorService {
         private readonly configService: ConfigService
     ) { }
 
-    @Cron('0 8 * * *') // Daily at 8 AM (adjust to your time)
+    /*@Cron('0 8 * * *') // Daily at 8 AM (adjust to your time)
     //@Cron(CronExpression.EVERY_30_SECONDS) //FOR TESTING - DELETE
+    //@Cron('53 12 * * *') //Daily at 12:53  //FOR TESTING - DELETE
     async initiateDailyBatch() {
         const storagePath = this.configService.get(EnvConstants.STORAGE_PATH);
         const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
@@ -28,5 +29,5 @@ export class BatchInitiatorService {
         this.arumaService.initWebScrapper();
 
         console.log(`Initiated batch for ${today}. Waiting for webhooks...`);
-    }
+    }*/
 }
