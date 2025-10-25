@@ -228,15 +228,17 @@ export class ArumaService {
     });
   }
 
-  async saveReportAsCsv(payload: any, deviceName: string): Promise<string> {
+  async saveReportAsCsv(sbReportPayload: any, deviceName: string): Promise<string> {
     const storagePath = this.configService.get<string>('STORAGE_PATH');
     const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
     const dateFolder = path.join(storagePath, today);
+    const resultsFolder = path.join(dateFolder, 'results');
     const payloadsFolder = path.join(dateFolder, 'payloads');
     const partialCsvsFolder = path.join(dateFolder, 'partials');
 
     // 1. Ensure the folder exists
     await fs.mkdir(dateFolder, { recursive: true });
+    await fs.mkdir(resultsFolder, { recursive: true });
     await fs.mkdir(payloadsFolder, { recursive: true });
     await fs.mkdir(partialCsvsFolder, { recursive: true });
 
@@ -256,7 +258,7 @@ export class ArumaService {
     const csvFilePath = path.join(partialCsvsFolder, fileName);
 
     // 6. Extract data rows from payload
-    const rows = (payload.response?.report_data || []).map((r: any) => ({
+    const rows = (sbReportPayload.response?.report_data || []).map((r: any) => ({
       participant_name: r.participant_name,
       participant: r.participant,
       booking_type: this.translateBookingType(r.booking_type),
@@ -277,8 +279,8 @@ export class ArumaService {
     }));
 
     // 7. Write the JSON copy (optional)
-    const jsonFilePath = path.join(payloadsFolder, `${payload.event_id}_${deviceName}.json`);
-    await fs.writeFile(jsonFilePath, JSON.stringify(payload, null, 2), 'utf-8');
+    const jsonFilePath = path.join(payloadsFolder, `${sbReportPayload.event_id}_${deviceName}.json`);
+    await fs.writeFile(jsonFilePath, JSON.stringify(sbReportPayload, null, 2), 'utf-8');
 
     // 8. Define CSV writer (headers must match CSV order)
     const csvWriter = createObjectCsvWriter({
@@ -309,8 +311,9 @@ export class ArumaService {
 
     console.log(`✅ CSV and JSON saved in ${dateFolder}`);
 
-    this.combineCsvsIfReady(devicesList);
-    this.generateServiceBookingsList(device.deviceName, device.portal, payload, devicesList);
+    await this.combineCsvsIfReady(devicesList);
+    await this.generateServiceBookingsList(device.deviceName, device.portal, sbReportPayload, devicesList);
+    await this.generateServiceBookingDetails(device.deviceName, device.portal, sbReportPayload);
 
     return csvFilePath;
   }
@@ -331,7 +334,7 @@ export class ArumaService {
         console.log('⚠️ Combination already in progress, skipping...');
         return null;
       }
-      throw err;
+      //throw err;
     }
 
     try {
@@ -554,6 +557,181 @@ export class ArumaService {
       // Release lock
       await fs.unlink(lockPath).catch(() => { });
     }
+  }
+
+  async generateServiceBookingDetails(
+    deviceName: string,
+    portal: string,
+    sbReportPayload: any
+  ): Promise<void> {
+    this.logger.log(`Processing SB_REPORT ServiceBookingDetails for ${deviceName} (${portal})...`);
+
+    const storagePath = this.configService.get<string>('STORAGE_PATH');
+    const today = new Date().toISOString().split('T')[0];
+    const dateFolder = path.join(storagePath, today);
+    const partialsFolder = path.join(dateFolder, 'partials');
+
+    const reportRecords = sbReportPayload?.response?.report_data || [];
+    if (reportRecords.length === 0) {
+      this.logger.warn(`No report data for ${deviceName}.`);
+      return;
+    }
+
+    const allServiceBookings: any[] = [];
+    const allSupportDetails: any[] = [];
+
+    for (const record of reportRecords) {
+      const { service_booking_id, participant } = record;
+      if (!service_booking_id || !participant) continue;
+
+      try {
+        const url = `4.0/service-bookings/${service_booking_id}`;
+        const method = 'GET';
+        const body = null;
+        const headers = { participant };
+        const queryObject = null;
+        const clientName = 'Aruma';
+        const saveTransaction = false;
+
+        const response = await this.defaultRequest(
+          url,
+          method,
+          body,
+          headers,
+          queryObject,
+          deviceName,
+          clientName,
+          saveTransaction
+        );
+
+        if (response?.success && response.result) {
+          const result: any = response.result;
+          const extractTime = format(new Date(), 'yyyy-MM-dd HH:mm:ss.SSS');
+
+          // 1️⃣ ServiceBookingDetails
+          const serviceRow = {
+            participant_name: `${result.participant_name?.toUpperCase()}(${result.participant})`,
+            booking_type: this.translateBookingType(result.booking_type),
+            service_booking_id: result.service_booking_id,
+            start_date: this.formatDate(result.start_date),
+            end_date: this.formatDate(result.end_date),
+            revised_end_date: this.formatDate(result.revised_end_date || '0000-00-00'),
+            in_kind_program: result.inkind_program ? 'TRUE' : 'FALSE',
+            status: result.status,
+            virtual_status: result.virtual_status,
+            total: result.items?.reduce((sum: number, i: any) => sum + (i.allocated_amount || 0), 0).toFixed(2),
+            extract_time: extractTime,
+          };
+          allServiceBookings.push(serviceRow);
+
+          // 2️⃣ SupportDetails
+          if (Array.isArray(result.items) && result.items.length > 0) {
+            let counter = 1;
+            for (const item of result.items) {
+              const supportRow = {
+                product_category: this.translateProductCategory(item.product_category),
+                product_category_item: item.product_category_item || '',
+                product_category_item_description: item.product_category_item_desc || '',
+                quantity: item.quantity,
+                allocated_amount: item.allocated_amount,
+                remaining_amount: item.remaining_amount,
+                service_booking_id: result.service_booking_id,
+                No: counter,
+                extract_time: extractTime,
+                unit_price: item.allocated_amount && item.quantity ? (item.allocated_amount / item.quantity).toFixed(2) : '',
+              };
+              allSupportDetails.push(supportRow);
+              counter++;
+            }
+          }
+        } else {
+          this.logger.warn(`No details found for service booking ${service_booking_id}`);
+        }
+      } catch (err) {
+        this.logger.error(`Error fetching service booking ${service_booking_id}: ${err.message}`);
+      }
+
+      // ⏱️ Throttle each call
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+
+    // 3️⃣ Write partial CSVs
+    if (allServiceBookings.length === 0 && allSupportDetails.length === 0) {
+      this.logger.warn(`No details collected for ${deviceName}.`);
+      return;
+    }
+
+    const sbCsvPath = path.join(partialsFolder, `ServiceBookingDetails_${deviceName}.csv`);
+    const sdCsvPath = path.join(partialsFolder, `SupportDetails_${deviceName}.csv`);
+
+    const sbCsvWriter = createObjectCsvWriter({
+      path: sbCsvPath,
+      header: [
+        { id: 'participant_name', title: 'participant_name' },
+        { id: 'booking_type', title: 'booking_type' },
+        { id: 'service_booking_id', title: 'service_booking_id' },
+        { id: 'start_date', title: 'start_date' },
+        { id: 'end_date', title: 'end_date' },
+        { id: 'revised_end_date', title: 'revised_end_date' },
+        { id: 'in_kind_program', title: 'in_kind_program' },
+        { id: 'status', title: 'status' },
+        { id: 'virtual_status', title: 'virtual_status' },
+        { id: 'total', title: 'total' },
+        { id: 'extract_time', title: 'extract_time' },
+      ],
+    });
+
+    const sdCsvWriter = createObjectCsvWriter({
+      path: sdCsvPath,
+      header: [
+        { id: 'product_category', title: 'product_category' },
+        { id: 'product_category_item', title: 'product_category_item' },
+        { id: 'product_category_item_description', title: 'product_category_item_description' },
+        { id: 'quantity', title: 'quantity' },
+        { id: 'allocated_amount', title: 'allocated_amount' },
+        { id: 'remaining_amount', title: 'remaining_amount' },
+        { id: 'service_booking_id', title: 'service_booking_id' },
+        { id: 'No', title: 'No' },
+        { id: 'extract_time', title: 'extract_time' },
+        { id: 'unit_price', title: 'unit_price' },
+      ],
+    });
+
+    if (allServiceBookings.length > 0) await sbCsvWriter.writeRecords(allServiceBookings);
+    if (allSupportDetails.length > 0) await sdCsvWriter.writeRecords(allSupportDetails);
+
+    this.logger.log(`Partial CSVs created for ${deviceName}:`);
+    this.logger.log(`  - ${sbCsvPath}`);
+    this.logger.log(`  - ${sdCsvPath}`);
+
+    // 4️⃣ Combine when ready
+    //await this.combineServiceBookingDetailsIfReady(partialsFolder, resultsFolder, deviceList);
+  }
+
+  private translateProductCategory(rawCategory: string): string {
+    if (!rawCategory) return '';
+
+    const category = rawCategory.trim().toUpperCase();
+
+    const translationMap: Record<string, string> = {
+      ASSISTIVE_TECHNOLOGY: 'Assistive Technology',
+      CB_CHOICE_CONTROL: 'Improved Life Choices',
+      CB_DAILY_ACTIVITY: 'Improved Daily Living Skills',
+      CB_EMPLOYMENT: 'Finding and Keeping a Job',
+      CB_HEALTH_WELLBEING: 'Improved Health and Wellbeing',
+      CB_HOME_LIVING: 'Improved Living Arrangements',
+      CB_LIFELONG_LEARNING: 'Improved Learning',
+      CB_RELATIONSHIPS: 'Improved Relationships',
+      CB_SOCIAL_COMMUNITY_CIVIC: 'Increased Social and Community Participation',
+      CONSUMABLES: 'Consumables',
+      DAILY_ACTIVITIES: 'Assistance with Daily Life',
+      HOME_MODIFICATIONS: 'Home Modifications',
+      SOCIAL_COMMUNITY_CIVIC: 'Assistance with Social, Economic and Community Participation',
+      SUPPORT_COORDINATION: 'Support Coordination',
+      TRANSPORT: 'Transport (Auto Payments)',
+    };
+
+    return translationMap[category] || '';
   }
 
   private translateBookingType(code: string): string {
