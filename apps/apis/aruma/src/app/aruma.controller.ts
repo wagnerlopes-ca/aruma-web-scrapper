@@ -48,7 +48,7 @@ export class ArumaController {
     const deviceName = params['deviceName'];
 
     if (eventId === 'SB_REPORT' && deviceName != null) {
-      this.arumaService.saveReportAsCsv(body, deviceName);
+      this.arumaService.processSbReportNotifications(body, deviceName);
     }
 
     this.logger.log(

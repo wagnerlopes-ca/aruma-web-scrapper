@@ -19,6 +19,10 @@ import { createObjectCsvWriter } from 'csv-writer';
 @Injectable()
 export class ArumaService {
   private readonly logger = new Logger(ArumaService.name);
+  private readonly SB_DOWNLOAD_PREFIX = 'SBDownload';
+  private readonly SERVICE_BOOKING_LIST_PREFIX = 'ServiceBookingList';
+  private readonly SERVICE_BOOKING_DETAILS_PREFIX = 'ServiceBookingDetails';
+  private readonly SUPPORT_DETAILS_PREFIX = 'SupportDetails';
 
   constructor(
     private readonly ndisService: NDISService,
@@ -228,7 +232,7 @@ export class ArumaService {
     });
   }
 
-  async saveReportAsCsv(sbReportPayload: any, deviceName: string): Promise<string> {
+  async processSbReportNotifications(sbReportPayload: any, deviceName: string): Promise<string> {
     const storagePath = this.configService.get<string>('STORAGE_PATH');
     const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
     const dateFolder = path.join(storagePath, today);
@@ -311,66 +315,82 @@ export class ArumaService {
 
     console.log(`✅ CSV and JSON saved in ${dateFolder}`);
 
-    await this.combineCsvsIfReady(devicesList);
+    await this.combineCsvsIfReady(this.SB_DOWNLOAD_PREFIX);
     await this.generateServiceBookingsList(device.deviceName, device.portal, sbReportPayload, devicesList);
     await this.generateServiceBookingDetails(device.deviceName, device.portal, sbReportPayload);
 
     return csvFilePath;
   }
 
-  async combineCsvsIfReady(devicesList: DeviceDto[]): Promise<string | null> {
+  async combineCsvsIfReady(prefix: string): Promise<string | null> {
     const storagePath = this.configService.get<string>('STORAGE_PATH');
     const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
     const resultsFolder = path.join(storagePath, today, 'results');
     const partialsFolder = path.join(storagePath, today, 'partials');
+    const lockPath = path.join(resultsFolder, `.${prefix}.lock`);
 
-    const lockPath = path.join(resultsFolder, '.combining.lock');
+    // 2. Parse devices list from env
+    const devicesListString: string =
+      this.configService.get<string>('DEVICES_LIST');
+    const devicesList: DeviceDto[] = JSON.parse(devicesListString || '[]');
+
+    await fs.mkdir(resultsFolder, { recursive: true });
 
     // Try to acquire lock
     try {
       await fs.open(lockPath, 'wx'); // fail if exists
     } catch (err: any) {
       if (err.code === 'EEXIST') {
-        console.log('⚠️ Combination already in progress, skipping...');
+        console.log(`⚠️ Combination for ${prefix} already in progress, skipping...`);
         return null;
       }
-      //throw err;
     }
 
     try {
-      // List all CSV files in results folder
       const allFiles = await fs.readdir(partialsFolder);
-      const csvFiles = allFiles.filter((f) => f.endsWith('.csv') && f.startsWith('SBDownload_'));
+      const csvFiles = allFiles.filter((f) => f.endsWith('.csv') && f.startsWith(prefix));
 
-      // Check if all devices have reported
       const missingDevices = devicesList.filter(
         (d: DeviceDto) => !csvFiles.some((f) => f.includes(d.deviceName))
       );
 
       if (missingDevices.length > 0) {
-        console.log(`⏳ Waiting for devices: ${missingDevices.join(', ')}`);
+        console.log(`⏳ Waiting for devices: ${missingDevices.map(d => d.deviceName).join(', ')}`);
         return null;
       }
 
-      // Read CSVs and combine
+      console.log(`📂 Combining ${csvFiles.length} CSVs for prefix "${prefix}"...`);
+
       const combinedLines: string[] = [];
       for (let i = 0; i < csvFiles.length; i++) {
         const csvPath = path.join(partialsFolder, csvFiles[i]);
-        const content = await fs.readFile(csvPath, 'utf-8');
-        const lines = content.split(/\r?\n/).filter((l) => l.trim().length > 0);
 
-        if (i === 0) {
-          // Keep header from first file
-          combinedLines.push(...lines);
-        } else {
-          // Skip header
-          combinedLines.push(...lines.slice(1));
+        try {
+          const content = await fs.readFile(csvPath, 'utf-8');
+          const lines = content.split(/\r?\n/).filter((l) => l.trim().length > 0);
+          if (lines.length <= 1) {
+            console.warn(`⚠️ Skipping empty or invalid CSV: ${csvFiles[i]}`);
+            continue;
+          }
+
+          if (i === 0) {
+            combinedLines.push(...lines);
+          } else {
+            combinedLines.push(...lines.slice(1)); // skip header
+          }
+        } catch (err: any) {
+          console.error(`❌ Error reading ${csvFiles[i]}: ${err.message}`);
+          continue;
         }
       }
 
-      // Write final combined CSV
+      if (combinedLines.length === 0) {
+        console.warn(`⚠️ No valid CSV data to combine for ${prefix}.`);
+        return null;
+      }
+
       const timestamp = format(new Date(), 'yyyyMMddHHmmss');
-      const finalCsvName = `ServiceBookingList_${timestamp}.csv`;
+      const finalCsvName = `${prefix}_${timestamp}.csv`;
       const finalCsvPath = path.join(resultsFolder, finalCsvName);
 
       await fs.writeFile(finalCsvPath, combinedLines.join('\n'), 'utf-8');
@@ -378,7 +398,6 @@ export class ArumaService {
       console.log(`✅ Combined CSV created: ${finalCsvPath}`);
       return finalCsvPath;
     } finally {
-      // Release lock
       await fs.unlink(lockPath).catch(() => { });
     }
   }
@@ -492,71 +511,8 @@ export class ArumaService {
     this.logger.log(`Partial CSV created: ${csvPath}`);
 
     // 4️⃣ Combine if ready
-    await this.createServiceBookingListIfReady(partialsFolder, resultsFolder, deviceList);
-  }
-
-  async createServiceBookingListIfReady(
-    partialsFolder: string,
-    resultsFolder: string,
-    deviceList: DeviceDto[]
-  ) {
-    const lockPath = path.join(resultsFolder, '.combining.lock');
-
-    // Try to acquire lock
-    try {
-      await fs.open(lockPath, 'wx'); // fail if exists
-    } catch (err: any) {
-      if (err.code === 'EEXIST') {
-        console.log('⚠️ Combination already in progress, skipping...');
-        return null;
-      }
-      throw err;
-    }
-
-    try {
-      // List all CSV files in results folder
-      const allFiles = await fs.readdir(partialsFolder);
-      const csvFiles = allFiles.filter((f) => f.endsWith('.csv') && f.startsWith('ServiceBookingList_'));
-
-      // Check if all devices have reported
-      const missingDevices = deviceList.filter(
-        (d: DeviceDto) => !csvFiles.some((f) => f.includes(d.deviceName))
-      );
-
-      if (missingDevices.length > 0) {
-        console.log(`⏳ Waiting for devices: ${missingDevices.join(', ')}`);
-        return null;
-      }
-
-      // Read CSVs and combine
-      const combinedLines: string[] = [];
-      for (let i = 0; i < csvFiles.length; i++) {
-        const csvPath = path.join(partialsFolder, csvFiles[i]);
-        const content = await fs.readFile(csvPath, 'utf-8');
-        const lines = content.split(/\r?\n/).filter((l) => l.trim().length > 0);
-
-        if (i === 0) {
-          // Keep header from first file
-          combinedLines.push(...lines);
-        } else {
-          // Skip header
-          combinedLines.push(...lines.slice(1));
-        }
-      }
-
-      // Write final combined CSV
-      const timestamp = format(new Date(), 'yyyyMMddHHmmss');
-      const finalCsvName = `ServiceBookingList_${timestamp}.csv`;
-      const finalCsvPath = path.join(resultsFolder, finalCsvName);
-
-      await fs.writeFile(finalCsvPath, combinedLines.join('\n'), 'utf-8');
-
-      console.log(`✅ Combined CSV created: ${finalCsvPath}`);
-      return finalCsvPath;
-    } finally {
-      // Release lock
-      await fs.unlink(lockPath).catch(() => { });
-    }
+    //await this.createServiceBookingListIfReady(partialsFolder, resultsFolder, deviceList);
+    await this.combineCsvsIfReady(this.SERVICE_BOOKING_LIST_PREFIX);
   }
 
   async generateServiceBookingDetails(
@@ -706,6 +662,8 @@ export class ArumaService {
 
     // 4️⃣ Combine when ready
     //await this.combineServiceBookingDetailsIfReady(partialsFolder, resultsFolder, deviceList);
+    await this.combineCsvsIfReady(this.SERVICE_BOOKING_DETAILS_PREFIX);
+    await this.combineCsvsIfReady(this.SUPPORT_DETAILS_PREFIX);
   }
 
   private translateProductCategory(rawCategory: string): string {
@@ -755,3 +713,133 @@ export class ArumaService {
     }
   }
 }
+
+/*async createServiceBookingListIfReady(
+  partialsFolder: string,
+  resultsFolder: string,
+  deviceList: DeviceDto[]
+) {
+  const lockPath = path.join(resultsFolder, '.combining.lock');
+
+  // Try to acquire lock
+  try {
+    await fs.open(lockPath, 'wx'); // fail if exists
+  } catch (err: any) {
+    if (err.code === 'EEXIST') {
+      console.log('⚠️ Combination already in progress, skipping...');
+      return null;
+    }
+    throw err;
+  }
+
+  try {
+    // List all CSV files in results folder
+    const allFiles = await fs.readdir(partialsFolder);
+    const csvFiles = allFiles.filter((f) => f.endsWith('.csv') && f.startsWith('ServiceBookingList_'));
+
+    // Check if all devices have reported
+    const missingDevices = deviceList.filter(
+      (d: DeviceDto) => !csvFiles.some((f) => f.includes(d.deviceName))
+    );
+
+    if (missingDevices.length > 0) {
+      console.log(`⏳ Waiting for devices: ${missingDevices.join(', ')}`);
+      return null;
+    }
+
+    // Read CSVs and combine
+    const combinedLines: string[] = [];
+    for (let i = 0; i < csvFiles.length; i++) {
+      const csvPath = path.join(partialsFolder, csvFiles[i]);
+      const content = await fs.readFile(csvPath, 'utf-8');
+      const lines = content.split(/\r?\n/).filter((l) => l.trim().length > 0);
+
+      if (i === 0) {
+        // Keep header from first file
+        combinedLines.push(...lines);
+      } else {
+        // Skip header
+        combinedLines.push(...lines.slice(1));
+      }
+    }
+
+    // Write final combined CSV
+    const timestamp = format(new Date(), 'yyyyMMddHHmmss');
+    const finalCsvName = `ServiceBookingList_${timestamp}.csv`;
+    const finalCsvPath = path.join(resultsFolder, finalCsvName);
+
+    await fs.writeFile(finalCsvPath, combinedLines.join('\n'), 'utf-8');
+
+    console.log(`✅ Combined CSV created: ${finalCsvPath}`);
+    return finalCsvPath;
+  } finally {
+    // Release lock
+    await fs.unlink(lockPath).catch(() => { });
+  }
+}*/
+
+
+/*  async combineCsvsIfReady(devicesList: DeviceDto[]): Promise<string | null> {
+    const storagePath = this.configService.get<string>('STORAGE_PATH');
+    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    const resultsFolder = path.join(storagePath, today, 'results');
+    const partialsFolder = path.join(storagePath, today, 'partials');
+ 
+    const lockPath = path.join(resultsFolder, '.combining.lock');
+ 
+    // Try to acquire lock
+    try {
+      await fs.open(lockPath, 'wx'); // fail if exists
+    } catch (err: any) {
+      if (err.code === 'EEXIST') {
+        console.log('⚠️ Combination already in progress, skipping...');
+        return null;
+      }
+      //throw err;
+    }
+ 
+    try {
+      // List all CSV files in results folder
+      const allFiles = await fs.readdir(partialsFolder);
+      const csvFiles = allFiles.filter((f) => f.endsWith('.csv') && f.startsWith('SBDownload_'));
+ 
+      // Check if all devices have reported
+      const missingDevices = devicesList.filter(
+        (d: DeviceDto) => !csvFiles.some((f) => f.includes(d.deviceName))
+      );
+ 
+      if (missingDevices.length > 0) {
+        console.log(`⏳ Waiting for devices: ${missingDevices.join(', ')}`);
+        return null;
+      }
+ 
+      // Read CSVs and combine
+      const combinedLines: string[] = [];
+      for (let i = 0; i < csvFiles.length; i++) {
+        const csvPath = path.join(partialsFolder, csvFiles[i]);
+        const content = await fs.readFile(csvPath, 'utf-8');
+        const lines = content.split(/\r?\n/).filter((l) => l.trim().length > 0);
+ 
+        if (i === 0) {
+          // Keep header from first file
+          combinedLines.push(...lines);
+        } else {
+          // Skip header
+          combinedLines.push(...lines.slice(1));
+        }
+      }
+ 
+      // Write final combined CSV
+      const timestamp = format(new Date(), 'yyyyMMddHHmmss');
+      const finalCsvName = `ServiceBookingList_${timestamp}.csv`;
+      const finalCsvPath = path.join(resultsFolder, finalCsvName);
+ 
+      await fs.writeFile(finalCsvPath, combinedLines.join('\n'), 'utf-8');
+ 
+      console.log(`✅ Combined CSV created: ${finalCsvPath}`);
+      return finalCsvPath;
+    } finally {
+      // Release lock
+      await fs.unlink(lockPath).catch(() => { });
+    }
+  }*/
