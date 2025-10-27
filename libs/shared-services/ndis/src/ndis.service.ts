@@ -1,33 +1,30 @@
 import { HttpException, Injectable, Logger, HttpStatus } from '@nestjs/common';
 import { HttpStatusCode } from 'axios';
 import { NDISInterface } from './ndis.interface';
-import { DeviceUsersService } from './device-users/device-users.service';
 import { ConfigService } from '@nestjs/config';
 import { EnvConstants } from '../env/env.constants';
 import { JwtService } from '@nestjs/jwt';
 import { v4 as uuidv4 } from 'uuid';
+import { DeviceUsersDto } from './device-users/dto/device-users.dto';
+import { DeviceUsersService } from './device-users/device-users.service';
 
 @Injectable()
 export class NDISService implements NDISInterface {
   private readonly logger = new Logger(NDISService.name);
 
   constructor(
-    private readonly deviceUsersService: DeviceUsersService,
     private readonly configService: ConfigService,
+    private readonly deviceUserService: DeviceUsersService
   ) { }
 
   async sendRequest(
     method: string,
     path: string,
     extraHeaders: object,
-    clientName: string,
     deviceName: string,
     requestBody: object,
-    queryObject: object,
-    saveTransaction: boolean
+    deviceUserDto: DeviceUsersDto
   ): Promise<Response> {
-    const deviceUserDto = await this.deviceUsersService.findOne(deviceName);
-
     if (deviceUserDto) {
       await this.stopIfTokenExpired(deviceUserDto.Token.access_token);
 
@@ -46,13 +43,12 @@ export class NDISService implements NDISInterface {
 
       return response;
     } else {
-      throw new HttpException(
+      this.logger.error(
         {
           success: false,
           result: undefined,
           errors: ['NDIA Device not found'],
-        },
-        HttpStatus.BAD_REQUEST,
+        }
       );
     }
   }
@@ -73,6 +69,22 @@ export class NDISService implements NDISInterface {
         errors: ['The NDIA token has expired']
       }, HttpStatusCode.InternalServerError);
     }
+  }
+
+  async refreshDeviceUserIfTokenExpired(deviceUserDto: DeviceUsersDto) {
+    const jwtService = new JwtService();
+    const payload = await jwtService.decode(deviceUserDto.Token.access_token);
+
+    const now = Date.now();
+    //Get the token expiry time minus 3 seconds to allow time 
+    //for the request to be sent to the NDIA
+    const exp = new Date((payload.exp * 1000) - 3000).getTime();
+
+    if (now >= exp) {
+      return await this.deviceUserService.findOne(deviceUserDto.DeviceName);
+    }
+
+    return deviceUserDto;
   }
 
   async logResult(response: Response) {
@@ -192,9 +204,5 @@ export class NDISService implements NDISInterface {
     }
 
     return requestOptions;
-  }
-
-  private getBaseNDISURL(apiVersion: string) {
-    return `${this.configService.get(EnvConstants.NDIS_BASE_URL)}/${apiVersion}`;
   }
 }

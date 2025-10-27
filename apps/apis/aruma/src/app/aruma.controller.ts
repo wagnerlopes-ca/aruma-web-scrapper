@@ -14,9 +14,7 @@ import { ApiTags } from '@nestjs/swagger';
 import { RequestDto } from './dto/request.dto';
 import { AuthBearerGuard } from './auth/auth-bearer.guards';
 import { AuthBasicNotificationGuard } from './auth/auth-basic-notification.guards';
-import { NotificationsService } from './notifications/notifications.service';
 import { ArumaService } from './aruma.service';
-import { ConfigService } from '@nestjs/config';
 
 @Controller()
 @ApiTags('Aruma')
@@ -25,8 +23,6 @@ export class ArumaController {
 
   constructor(
     private readonly arumaService: ArumaService,
-    private readonly notificationsService: NotificationsService,
-    private readonly configService: ConfigService
   ) { }
 
   @Get('health-check')

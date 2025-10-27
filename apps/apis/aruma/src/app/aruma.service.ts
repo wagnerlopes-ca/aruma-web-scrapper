@@ -7,7 +7,6 @@ import { NDISService } from '@app/ndis';
 import { PlannedOutagesService } from './planned-outages/planned-outages.service';
 import { ResponseDto } from './dto/response.dto';
 import { DeviceDto } from './dto/device.dto';
-import { NotificationsService } from './notifications/notifications.service';
 import { ConfigService } from '@nestjs/config';
 import { DeviceUsersService } from './device-users/device-users.service';
 import { EnvConstants } from '../../env/env-constants';
@@ -15,6 +14,8 @@ import * as path from 'path';
 import { promises as fs } from 'fs';
 import { format } from 'date-fns';
 import { createObjectCsvWriter } from 'csv-writer';
+import { DeviceUsersDto } from './device-users/dto/device-users.dto';
+import { JwtService } from '@nestjs/jwt';
 
 @Injectable()
 export class ArumaService {
@@ -27,17 +28,12 @@ export class ArumaService {
   constructor(
     private readonly ndisService: NDISService,
     private readonly plannedOutagesService: PlannedOutagesService,
-    private readonly notificationsService: NotificationsService,
     private readonly configService: ConfigService,
     private readonly deviceUserService: DeviceUsersService
   ) { }
 
   public async stopIfOutage() {
     return this.plannedOutagesService.stopIfOutage();
-  }
-
-  private isBlank(value: unknown): boolean {
-    return value === null || value === undefined || value === '';
   }
 
   public async sendRequest(
@@ -48,7 +44,8 @@ export class ArumaService {
     deviceName: string,
     clientName: string,
     queryObject: object,
-    saveTransaction: boolean
+    saveTransaction: boolean,
+    deviceUser: DeviceUsersDto
   ): Promise<Response> {
     this.logger.log({
       message: `Request received!`,
@@ -67,11 +64,9 @@ export class ArumaService {
       method,
       path,
       extraHeaders,
-      clientName,
       deviceName,
       requestBody,
-      queryObject,
-      saveTransaction
+      deviceUser
     );
   }
 
@@ -83,7 +78,8 @@ export class ArumaService {
     queryObject: object,
     deviceName: string,
     clientName: string,
-    saveTransaction: boolean
+    saveTransaction: boolean,
+    deviceUser: DeviceUsersDto
   ): Promise<ResponseDto> {
     try {
       //This method will throw an exception in case of outage
@@ -98,7 +94,8 @@ export class ArumaService {
         deviceName,
         clientName,
         queryObject,
-        saveTransaction
+        saveTransaction,
+        deviceUser
       );
 
       if (!response.ok) {
@@ -217,7 +214,9 @@ export class ArumaService {
     const devicesListString: string = this.configService.get(EnvConstants.DEVICES_LIST);
     const deviceList: DeviceDto[] = JSON.parse(devicesListString);
 
-    deviceList.forEach(deviceObject => {
+    deviceList.forEach(async deviceObject => {
+      const deviceUser = await this.deviceUserService.findOne(deviceObject.deviceName);
+
       this.defaultRequest(
         url,
         method,
@@ -226,7 +225,8 @@ export class ArumaService {
         queryObject,
         deviceObject.deviceName,
         clientName,
-        saveTransaction
+        saveTransaction,
+        deviceUser
       )
       console.log(Date.now().toLocaleString());
     });
@@ -256,6 +256,8 @@ export class ArumaService {
       (d) => d.deviceName === deviceName
     );
     const provider = device?.provider ?? '';
+
+    const deviceUser = await this.deviceUserService.findOne(deviceName);
 
     // 4. Build filename
     const fileName = `SBDownload_${deviceName}.csv`;
@@ -316,8 +318,8 @@ export class ArumaService {
     console.log(`✅ CSV and JSON saved in ${dateFolder}`);
 
     await this.combineCsvsIfReady(this.SB_DOWNLOAD_PREFIX);
-    await this.generateServiceBookingsList(device.deviceName, device.portal, sbReportPayload, devicesList);
-    await this.generateServiceBookingDetails(device.deviceName, device.portal, sbReportPayload);
+    await this.generateServiceBookingsList(device.deviceName, device.portal, sbReportPayload, deviceUser);
+    await this.generateServiceBookingDetails(device.deviceName, device.portal, sbReportPayload, deviceUser);
 
     return csvFilePath;
   }
@@ -406,14 +408,13 @@ export class ArumaService {
     deviceName: string,
     portal: string,
     sbReportPayload: any,
-    deviceList: DeviceDto[]
+    deviceUser: DeviceUsersDto
   ): Promise<void> {
     this.logger.log(`Processing SB_REPORT for ${deviceName} (${portal})...`);
 
     const storagePath = this.configService.get<string>('STORAGE_PATH');
     const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
     const dateFolder = path.join(storagePath, today);
-    const resultsFolder = path.join(dateFolder, 'results');
     const partialsFolder = path.join(dateFolder, 'partials');
 
     // 1️⃣ Extract unique participants
@@ -436,6 +437,8 @@ export class ArumaService {
 
     for (const { participant } of participants) {
       try {
+        const localDeviceUser: DeviceUsersDto = await this.refreshDeviceUserIfTokenExpired(deviceUser);
+
         const url = '4.0/service-bookings';
         const method = 'GET';
         const body = null;
@@ -452,7 +455,8 @@ export class ArumaService {
           queryObject,
           deviceName,
           clientName,
-          saveTransaction
+          saveTransaction,
+          localDeviceUser
         );
 
         if (response?.success && Array.isArray(response.result) && response.result.length > 0) {
@@ -515,10 +519,27 @@ export class ArumaService {
     await this.combineCsvsIfReady(this.SERVICE_BOOKING_LIST_PREFIX);
   }
 
+  async refreshDeviceUserIfTokenExpired(deviceUserDto: DeviceUsersDto) {
+    const jwtService = new JwtService();
+    const payload = await jwtService.decode(deviceUserDto.Token.access_token);
+
+    const now = Date.now();
+    //Get the token expiry time minus 3 seconds to allow time 
+    //for the request to be sent to the NDIA
+    const exp = new Date((payload.exp * 1000) - 3000).getTime();
+
+    if (now >= exp) {
+      return await this.deviceUserService.findOne(deviceUserDto.DeviceName);
+    }
+
+    return deviceUserDto;
+  }
+
   async generateServiceBookingDetails(
     deviceName: string,
     portal: string,
-    sbReportPayload: any
+    sbReportPayload: any,
+    deviceUser: DeviceUsersDto
   ): Promise<void> {
     this.logger.log(`Processing SB_REPORT ServiceBookingDetails for ${deviceName} (${portal})...`);
 
@@ -526,6 +547,7 @@ export class ArumaService {
     const today = new Date().toISOString().split('T')[0];
     const dateFolder = path.join(storagePath, today);
     const partialsFolder = path.join(dateFolder, 'partials');
+    //const deviceUser: DeviceUsersDto = await this.deviceUserService.findOne(deviceName);
 
     const reportRecords = sbReportPayload?.response?.report_data || [];
     if (reportRecords.length === 0) {
@@ -541,6 +563,7 @@ export class ArumaService {
       if (!service_booking_id || !participant) continue;
 
       try {
+        const localDeviceUser: DeviceUsersDto = await this.refreshDeviceUserIfTokenExpired(deviceUser);
         const url = `4.0/service-bookings/${service_booking_id}`;
         const method = 'GET';
         const body = null;
@@ -557,7 +580,8 @@ export class ArumaService {
           queryObject,
           deviceName,
           clientName,
-          saveTransaction
+          saveTransaction,
+          localDeviceUser
         );
 
         if (response?.success && response.result) {
@@ -713,133 +737,3 @@ export class ArumaService {
     }
   }
 }
-
-/*async createServiceBookingListIfReady(
-  partialsFolder: string,
-  resultsFolder: string,
-  deviceList: DeviceDto[]
-) {
-  const lockPath = path.join(resultsFolder, '.combining.lock');
-
-  // Try to acquire lock
-  try {
-    await fs.open(lockPath, 'wx'); // fail if exists
-  } catch (err: any) {
-    if (err.code === 'EEXIST') {
-      console.log('⚠️ Combination already in progress, skipping...');
-      return null;
-    }
-    throw err;
-  }
-
-  try {
-    // List all CSV files in results folder
-    const allFiles = await fs.readdir(partialsFolder);
-    const csvFiles = allFiles.filter((f) => f.endsWith('.csv') && f.startsWith('ServiceBookingList_'));
-
-    // Check if all devices have reported
-    const missingDevices = deviceList.filter(
-      (d: DeviceDto) => !csvFiles.some((f) => f.includes(d.deviceName))
-    );
-
-    if (missingDevices.length > 0) {
-      console.log(`⏳ Waiting for devices: ${missingDevices.join(', ')}`);
-      return null;
-    }
-
-    // Read CSVs and combine
-    const combinedLines: string[] = [];
-    for (let i = 0; i < csvFiles.length; i++) {
-      const csvPath = path.join(partialsFolder, csvFiles[i]);
-      const content = await fs.readFile(csvPath, 'utf-8');
-      const lines = content.split(/\r?\n/).filter((l) => l.trim().length > 0);
-
-      if (i === 0) {
-        // Keep header from first file
-        combinedLines.push(...lines);
-      } else {
-        // Skip header
-        combinedLines.push(...lines.slice(1));
-      }
-    }
-
-    // Write final combined CSV
-    const timestamp = format(new Date(), 'yyyyMMddHHmmss');
-    const finalCsvName = `ServiceBookingList_${timestamp}.csv`;
-    const finalCsvPath = path.join(resultsFolder, finalCsvName);
-
-    await fs.writeFile(finalCsvPath, combinedLines.join('\n'), 'utf-8');
-
-    console.log(`✅ Combined CSV created: ${finalCsvPath}`);
-    return finalCsvPath;
-  } finally {
-    // Release lock
-    await fs.unlink(lockPath).catch(() => { });
-  }
-}*/
-
-
-/*  async combineCsvsIfReady(devicesList: DeviceDto[]): Promise<string | null> {
-    const storagePath = this.configService.get<string>('STORAGE_PATH');
-    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-    const resultsFolder = path.join(storagePath, today, 'results');
-    const partialsFolder = path.join(storagePath, today, 'partials');
- 
-    const lockPath = path.join(resultsFolder, '.combining.lock');
- 
-    // Try to acquire lock
-    try {
-      await fs.open(lockPath, 'wx'); // fail if exists
-    } catch (err: any) {
-      if (err.code === 'EEXIST') {
-        console.log('⚠️ Combination already in progress, skipping...');
-        return null;
-      }
-      //throw err;
-    }
- 
-    try {
-      // List all CSV files in results folder
-      const allFiles = await fs.readdir(partialsFolder);
-      const csvFiles = allFiles.filter((f) => f.endsWith('.csv') && f.startsWith('SBDownload_'));
- 
-      // Check if all devices have reported
-      const missingDevices = devicesList.filter(
-        (d: DeviceDto) => !csvFiles.some((f) => f.includes(d.deviceName))
-      );
- 
-      if (missingDevices.length > 0) {
-        console.log(`⏳ Waiting for devices: ${missingDevices.join(', ')}`);
-        return null;
-      }
- 
-      // Read CSVs and combine
-      const combinedLines: string[] = [];
-      for (let i = 0; i < csvFiles.length; i++) {
-        const csvPath = path.join(partialsFolder, csvFiles[i]);
-        const content = await fs.readFile(csvPath, 'utf-8');
-        const lines = content.split(/\r?\n/).filter((l) => l.trim().length > 0);
- 
-        if (i === 0) {
-          // Keep header from first file
-          combinedLines.push(...lines);
-        } else {
-          // Skip header
-          combinedLines.push(...lines.slice(1));
-        }
-      }
- 
-      // Write final combined CSV
-      const timestamp = format(new Date(), 'yyyyMMddHHmmss');
-      const finalCsvName = `ServiceBookingList_${timestamp}.csv`;
-      const finalCsvPath = path.join(resultsFolder, finalCsvName);
- 
-      await fs.writeFile(finalCsvPath, combinedLines.join('\n'), 'utf-8');
- 
-      console.log(`✅ Combined CSV created: ${finalCsvPath}`);
-      return finalCsvPath;
-    } finally {
-      // Release lock
-      await fs.unlink(lockPath).catch(() => { });
-    }
-  }*/
