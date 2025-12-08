@@ -22,4 +22,9 @@ export class EnvConstants {
   static readonly ALL_NOTIFICATIONS = 'ALL_NOTIFICATIONS';
   static readonly DEVICES_LIST = 'DEVICES_LIST';
   static readonly STORAGE_PATH = 'STORAGE_PATH';
+  static readonly SFTP_HOST = 'SFTP_HOST';
+  static readonly SFTP_PORT = 'SFTP_PORT';
+  static readonly SFTP_USERNAME = 'SFTP_USERNAME';
+  static readonly SFTP_PRIVATE_KEY = 'SFTP_PRIVATE_KEY';
+  static readonly SFTP_REMOTE_PATH = 'SFTP_REMOTE_PATH';
 }

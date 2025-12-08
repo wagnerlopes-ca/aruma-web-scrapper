@@ -16,6 +16,7 @@ import { format } from 'date-fns';
 import { createObjectCsvWriter } from 'csv-writer';
 import { DeviceUsersDto } from './device-users/dto/device-users.dto';
 import { JwtService } from '@nestjs/jwt';
+import { CsvUploaderService } from './sftp/csv-uploader.service';
 
 @Injectable()
 export class ArumaService {
@@ -320,6 +321,10 @@ export class ArumaService {
     await this.combineCsvsIfReady(this.SB_DOWNLOAD_PREFIX);
     await this.generateServiceBookingsList(device.deviceName, device.portal, sbReportPayload, deviceUser);
     await this.generateServiceBookingDetails(device.deviceName, device.portal, sbReportPayload, deviceUser);
+
+    // const csvUploadService = new CsvUploaderService(this.configService, this.logger);
+
+    // csvUploadService.uploadResultsToSftp();
 
     return csvFilePath;
   }

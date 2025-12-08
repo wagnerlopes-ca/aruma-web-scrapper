@@ -17,7 +17,7 @@ import { ArumaController } from './aruma.controller';
 import { ArumaService } from './aruma.service';
 import { validateMethod } from '../../env/env.validation';
 import { ScheduleModule } from '@nestjs/schedule';
-import { BatchInitiatorService } from './BatchInitiatorService';
+import { BatchInitiatorService } from './batch-initiator.service';
 
 @Module({
   imports: [

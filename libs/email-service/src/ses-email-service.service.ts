@@ -140,31 +140,31 @@ export class SESEmailService implements EmailService {
     subject: string,
     attachment: object
   ): Promise<void> {
-    try {
-      const rawEmail = this.createSendRawEmailContent(
-        toAddresses,
-        fromAddress,
-        subject,
-        attachment
-      );
+    // try {
+    //   const rawEmail = this.createSendRawEmailContent(
+    //     toAddresses,
+    //     fromAddress,
+    //     subject,
+    //     attachment
+    //   );
 
-      const command = new SendRawEmailCommand({
-        RawMessage: { Data: Buffer.from(rawEmail) },
-      });
-      const response = await this.client.send(command);
+    //   const command = new SendRawEmailCommand({
+    //     RawMessage: { Data: Buffer.from(rawEmail) },
+    //   });
+    //   const response = await this.client.send(command);
 
-      this.logger.log(
-        {
-          message: `Email sent to: ${toAddresses}`,
-          rawEmail: rawEmail.length < 5000 ? rawEmail : 'Too large to log',
-          response: response
-        }
-      )
+    //   this.logger.log(
+    //     {
+    //       message: `Email sent to: ${toAddresses}`,
+    //       rawEmail: rawEmail.length < 5000 ? rawEmail : 'Too large to log',
+    //       response: response
+    //     }
+    //   )
 
-      this.logger.log(`Email message sent to AWS SES - ${toAddresses}`);
-    } catch (e) {
-      this.logger.error(`Error to send email message - ${e.message}`);
-    }
+    //   this.logger.log(`Email message sent to AWS SES - ${toAddresses}`);
+    // } catch (e) {
+    //   this.logger.error(`Error to send email message - ${e.message}`);
+    // }
   }
 
   private objectToHtml(data: object) {
