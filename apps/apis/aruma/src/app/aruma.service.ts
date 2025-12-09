@@ -16,11 +16,13 @@ import { format } from 'date-fns';
 import { createObjectCsvWriter } from 'csv-writer';
 import { DeviceUsersDto } from './device-users/dto/device-users.dto';
 import { JwtService } from '@nestjs/jwt';
-import { CsvUploaderService } from './sftp/csv-uploader.service';
+//import { CsvUploaderService } from './csv-uploader/csv-uploader.service';
+import Client from 'ssh2-sftp-client';
 
 @Injectable()
 export class ArumaService {
   private readonly logger = new Logger(ArumaService.name);
+
   private readonly SB_DOWNLOAD_PREFIX = 'SBDownload';
   private readonly SERVICE_BOOKING_LIST_PREFIX = 'ServiceBookingList';
   private readonly SERVICE_BOOKING_DETAILS_PREFIX = 'ServiceBookingDetails';
@@ -233,7 +235,70 @@ export class ArumaService {
     });
   }
 
-  async processSbReportNotifications(sbReportPayload: any, deviceName: string): Promise<string> {
+  async saveSBReport(deviceName: string, payloadsFolder: string, sbReportPayload: any) {
+    const jsonFilePath = path.join(payloadsFolder, `${sbReportPayload.event_id}_${deviceName}.json`);
+    await fs.writeFile(jsonFilePath, JSON.stringify(sbReportPayload, null, 2), 'utf-8');
+
+    this.logger.log(`✅ SB_REPORT saved in ${jsonFilePath}`);
+  }
+
+  async saveSBDownloadPartial(deviceName: string, partialCsvsFolder: string, sbReportPayload: any, provider: string) {
+    // 1. Build filename
+    const fileName = `SBDownload_${deviceName}.csv`;
+    const csvFilePath = path.join(partialCsvsFolder, fileName);
+
+    // 2. Extract data rows from payload
+    const rows = (sbReportPayload.response?.report_data || []).map((r: any) => ({
+      participant_name: r.participant_name,
+      participant: r.participant,
+      booking_type: this.translateBookingType(r.booking_type),
+      service_booking_id: r.service_booking_id,
+      initiated_by: r.initiated_by,
+      product_category: r.product_category,
+      product_category_item: r.product_category_item,
+      quantity: r.quantity,
+      start_date: r.start_date + ' 00:00:00.000',
+      end_date: r.end_date + ' 00:00:00.000',
+      allocated_amount: r.allocated_amount,
+      remaining_amount: r.remaining_amount,
+      accrual_amount: r.accrual_amount,
+      last_modified_date: r.last_modified_date + ' 00:00:00.000',
+      virtual_status: r.virtual_status,
+      provider: provider,
+      status: r.status,
+    }));
+
+    // 3. Define CSV writer (headers must match CSV order)
+    const csvWriter = createObjectCsvWriter({
+      path: csvFilePath,
+      header: [
+        { id: 'participant_name', title: 'participant_name' },
+        { id: 'participant', title: 'participant' },
+        { id: 'booking_type', title: 'booking_type' },
+        { id: 'service_booking_id', title: 'service_booking_id' },
+        { id: 'initiated_by', title: 'initiated_by' },
+        { id: 'product_category', title: 'product_category' },
+        { id: 'product_category_item', title: 'product_category_item' },
+        { id: 'quantity', title: 'quantity' },
+        { id: 'start_date', title: 'start_date' },
+        { id: 'end_date', title: 'end_date' },
+        { id: 'allocated_amount', title: 'allocated_amount' },
+        { id: 'remaining_amount', title: 'remaining_amount' },
+        { id: 'accrual_amount', title: 'accrual_amount' },
+        { id: 'last_modified_date', title: 'last_modified_date' },
+        { id: 'virtual_status', title: 'virtual_status' },
+        { id: 'provider', title: 'provider' },
+        { id: 'status', title: 'status' },
+      ],
+    });
+
+    // 4. Write CSV
+    await csvWriter.writeRecords(rows);
+
+    console.log(`✅ CSV saved in ${csvFilePath}`);
+  }
+
+  async processSbReportNotification(sbReportPayload: any, deviceName: string): Promise<string> {
     const storagePath = this.configService.get<string>('STORAGE_PATH');
     const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
     const dateFolder = path.join(storagePath, today);
@@ -260,111 +325,28 @@ export class ArumaService {
 
     const deviceUser = await this.deviceUserService.findOne(deviceName);
 
-    // 4. Build filename
-    const fileName = `SBDownload_${deviceName}.csv`;
-    const csvFilePath = path.join(partialCsvsFolder, fileName);
+    // 4. Save Files
+    await this.saveSBReport(deviceName, partialCsvsFolder, sbReportPayload);
 
-    // 6. Extract data rows from payload
-    const rows = (sbReportPayload.response?.report_data || []).map((r: any) => ({
-      participant_name: r.participant_name,
-      participant: r.participant,
-      booking_type: this.translateBookingType(r.booking_type),
-      service_booking_id: r.service_booking_id,
-      initiated_by: r.initiated_by,
-      product_category: r.product_category,
-      product_category_item: r.product_category_item,
-      quantity: r.quantity,
-      start_date: r.start_date + ' 00:00:00.000',
-      end_date: r.end_date + ' 00:00:00.000',
-      allocated_amount: r.allocated_amount,
-      remaining_amount: r.remaining_amount,
-      accrual_amount: r.accrual_amount,
-      last_modified_date: r.last_modified_date + ' 00:00:00.000',
-      virtual_status: r.virtual_status,
-      provider: provider,
-      status: r.status,
-    }));
+    //5. Generate partial CSV files
+    await this.saveSBDownloadPartial(deviceName, partialCsvsFolder, sbReportPayload, provider);
+    await this.generateServiceBookingsListPartial(device.deviceName, device.portal, sbReportPayload, deviceUser);
+    await this.generateServiceBookingDetailsAndSupportDetailsPartials(device.deviceName, device.portal, sbReportPayload, deviceUser);
 
-    // 7. Write the JSON copy (optional)
-    const jsonFilePath = path.join(payloadsFolder, `${sbReportPayload.event_id}_${deviceName}.json`);
-    await fs.writeFile(jsonFilePath, JSON.stringify(sbReportPayload, null, 2), 'utf-8');
-
-    // 8. Define CSV writer (headers must match CSV order)
-    const csvWriter = createObjectCsvWriter({
-      path: csvFilePath,
-      header: [
-        { id: 'participant_name', title: 'participant_name' },
-        { id: 'participant', title: 'participant' },
-        { id: 'booking_type', title: 'booking_type' },
-        { id: 'service_booking_id', title: 'service_booking_id' },
-        { id: 'initiated_by', title: 'initiated_by' },
-        { id: 'product_category', title: 'product_category' },
-        { id: 'product_category_item', title: 'product_category_item' },
-        { id: 'quantity', title: 'quantity' },
-        { id: 'start_date', title: 'start_date' },
-        { id: 'end_date', title: 'end_date' },
-        { id: 'allocated_amount', title: 'allocated_amount' },
-        { id: 'remaining_amount', title: 'remaining_amount' },
-        { id: 'accrual_amount', title: 'accrual_amount' },
-        { id: 'last_modified_date', title: 'last_modified_date' },
-        { id: 'virtual_status', title: 'virtual_status' },
-        { id: 'provider', title: 'provider' },
-        { id: 'status', title: 'status' },
-      ],
-    });
-
-    // 9. Write CSV
-    await csvWriter.writeRecords(rows);
-
-    console.log(`✅ CSV and JSON saved in ${dateFolder}`);
-
-    await this.combineCsvsIfReady(this.SB_DOWNLOAD_PREFIX);
-    await this.generateServiceBookingsList(device.deviceName, device.portal, sbReportPayload, deviceUser);
-    await this.generateServiceBookingDetails(device.deviceName, device.portal, sbReportPayload, deviceUser);
-
-    // const csvUploadService = new CsvUploaderService(this.configService, this.logger);
-
-    // csvUploadService.uploadResultsToSftp();
-
-    return csvFilePath;
+    return null;
   }
 
-  async combineCsvsIfReady(prefix: string): Promise<string | null> {
+  async generateResultFiles(prefix: string): Promise<string | null> {
     const storagePath = this.configService.get<string>('STORAGE_PATH');
     const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
     const resultsFolder = path.join(storagePath, today, 'results');
     const partialsFolder = path.join(storagePath, today, 'partials');
-    const lockPath = path.join(resultsFolder, `.${prefix}.lock`);
-
-    // 2. Parse devices list from env
-    const devicesListString: string =
-      this.configService.get<string>('DEVICES_LIST');
-    const devicesList: DeviceDto[] = JSON.parse(devicesListString || '[]');
 
     await fs.mkdir(resultsFolder, { recursive: true });
-
-    // Try to acquire lock
-    try {
-      await fs.open(lockPath, 'wx'); // fail if exists
-    } catch (err: any) {
-      if (err.code === 'EEXIST') {
-        console.log(`⚠️ Combination for ${prefix} already in progress, skipping...`);
-        return null;
-      }
-    }
 
     try {
       const allFiles = await fs.readdir(partialsFolder);
       const csvFiles = allFiles.filter((f) => f.endsWith('.csv') && f.startsWith(prefix));
-
-      const missingDevices = devicesList.filter(
-        (d: DeviceDto) => !csvFiles.some((f) => f.includes(d.deviceName))
-      );
-
-      if (missingDevices.length > 0) {
-        console.log(`⏳ Waiting for devices: ${missingDevices.map(d => d.deviceName).join(', ')}`);
-        return null;
-      }
 
       console.log(`📂 Combining ${csvFiles.length} CSVs for prefix "${prefix}"...`);
 
@@ -404,12 +386,12 @@ export class ArumaService {
 
       console.log(`✅ Combined CSV created: ${finalCsvPath}`);
       return finalCsvPath;
-    } finally {
-      await fs.unlink(lockPath).catch(() => { });
+    } catch (exception) {
+      this.logger.error(exception);
     }
   }
 
-  async generateServiceBookingsList(
+  async generateServiceBookingsListPartial(
     deviceName: string,
     portal: string,
     sbReportPayload: any,
@@ -521,7 +503,7 @@ export class ArumaService {
 
     // 4️⃣ Combine if ready
     //await this.createServiceBookingListIfReady(partialsFolder, resultsFolder, deviceList);
-    await this.combineCsvsIfReady(this.SERVICE_BOOKING_LIST_PREFIX);
+    //await this.generateSBDownload(this.SERVICE_BOOKING_LIST_PREFIX);
   }
 
   async refreshDeviceUserIfTokenExpired(deviceUserDto: DeviceUsersDto) {
@@ -540,7 +522,7 @@ export class ArumaService {
     return deviceUserDto;
   }
 
-  async generateServiceBookingDetails(
+  async generateServiceBookingDetailsAndSupportDetailsPartials(
     deviceName: string,
     portal: string,
     sbReportPayload: any,
@@ -646,11 +628,11 @@ export class ArumaService {
       return;
     }
 
-    const sbCsvPath = path.join(partialsFolder, `ServiceBookingDetails_${deviceName}.csv`);
-    const sdCsvPath = path.join(partialsFolder, `SupportDetails_${deviceName}.csv`);
+    const serviceBookingDetailsCsvPath = path.join(partialsFolder, `ServiceBookingDetails_${deviceName}.csv`);
+    const supportDetailsCsvPath = path.join(partialsFolder, `SupportDetails_${deviceName}.csv`);
 
     const sbCsvWriter = createObjectCsvWriter({
-      path: sbCsvPath,
+      path: serviceBookingDetailsCsvPath,
       header: [
         { id: 'participant_name', title: 'participant_name' },
         { id: 'booking_type', title: 'booking_type' },
@@ -667,7 +649,7 @@ export class ArumaService {
     });
 
     const sdCsvWriter = createObjectCsvWriter({
-      path: sdCsvPath,
+      path: supportDetailsCsvPath,
       header: [
         { id: 'product_category', title: 'product_category' },
         { id: 'product_category_item', title: 'product_category_item' },
@@ -685,14 +667,92 @@ export class ArumaService {
     if (allServiceBookings.length > 0) await sbCsvWriter.writeRecords(allServiceBookings);
     if (allSupportDetails.length > 0) await sdCsvWriter.writeRecords(allSupportDetails);
 
-    this.logger.log(`Partial CSVs created for ${deviceName}:`);
-    this.logger.log(`  - ${sbCsvPath}`);
-    this.logger.log(`  - ${sdCsvPath}`);
+    this.logger.log(`
+      Partial CSVs created for ${deviceName}:
+        - ${serviceBookingDetailsCsvPath}
+        - ${supportDetailsCsvPath}`
+    );
+  }
 
-    // 4️⃣ Combine when ready
-    //await this.combineServiceBookingDetailsIfReady(partialsFolder, resultsFolder, deviceList);
-    await this.combineCsvsIfReady(this.SERVICE_BOOKING_DETAILS_PREFIX);
-    await this.combineCsvsIfReady(this.SUPPORT_DETAILS_PREFIX);
+  async createResultFilesAndUpload() {
+    await this.generateResultFiles(this.SB_DOWNLOAD_PREFIX);
+    await this.generateResultFiles(this.SERVICE_BOOKING_DETAILS_PREFIX);
+    await this.generateResultFiles(this.SUPPORT_DETAILS_PREFIX);
+    await this.generateResultFiles(this.SERVICE_BOOKING_LIST_PREFIX);
+
+    await this.uploadResultsToSftp();
+  }
+
+  private async uploadResultsToSftp(): Promise<void> {
+    const storagePath = this.configService.get<string>(EnvConstants.STORAGE_PATH);
+    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    const resultsFolder = path.join(storagePath, today, 'results');
+
+    const requiredPrefixes = [
+      'SBDownload_',
+      'ServiceBookingDetails_',
+      'ServiceBookingList_',
+      'SupportDetails_',
+    ];
+
+    const allFiles = await fs.readdir(resultsFolder);
+    const resultFiles: Record<string, string> = {};
+
+    // Check if all files exist
+    for (const prefix of requiredPrefixes) {
+      const match = allFiles.find((f) => f.startsWith(prefix) && f.endsWith('.csv'));
+      if (!match) {
+        this.logger.warn(`Missing result file for prefix: ${prefix}`);
+        return;
+      }
+      resultFiles[prefix] = path.join(resultsFolder, match);
+    }
+
+    this.logger.log('✅ All result files found, preparing to upload...');
+
+    // Load SFTP credentials from environment variables
+    const sftpHost = this.configService.get<string>(EnvConstants.SFTP_HOST);
+    const sftpPort = parseInt(this.configService.get<string>(EnvConstants.SFTP_PORT) || '22', 10);
+    const sftpUserName = this.configService.get<string>(EnvConstants.SFTP_USERNAME);
+    const sftpRemotePath = this.configService.get<string>(EnvConstants.SFTP_REMOTE_PATH) || '/uploads';
+    const sftpKey = this.configService.get<string>(EnvConstants.SFTP_PRIVATE_KEY);
+
+    const sftp = new Client();
+
+    try {
+      await sftp.connect({
+        host: sftpHost,
+        port: sftpPort,
+        username: sftpUserName,
+        privateKey: sftpKey,
+      });
+
+      this.logger.log(`Connected to SFTP: ${sftpHost}`);
+
+      // Ensure remote folder exists
+      const remoteExists = await sftp.exists(sftpRemotePath);
+      if (!remoteExists) {
+        await sftp.mkdir(sftpRemotePath, true);
+      }
+
+      // Upload all files
+      for (const [prefix, filePath] of Object.entries(resultFiles)) {
+        const fileName = path.basename(filePath);
+        //const remoteFile = path.join(sftpRemotePath, fileName);
+        const remoteFile = `${sftpRemotePath}/${fileName}`;
+
+        await sftp.fastPut(filePath, remoteFile);
+        this.logger.log(`⬆️  Uploaded ${fileName} to ${remoteFile}`);
+      }
+
+      this.logger.log('✅ All result files uploaded successfully.');
+    } catch (err) {
+      this.logger.error(`❌ SFTP upload failed: ${err.message}`);
+      throw err;
+    } finally {
+      sftp.end();
+      this.logger.log('🔌 SFTP connection closed.');
+    }
   }
 
   private translateProductCategory(rawCategory: string): string {

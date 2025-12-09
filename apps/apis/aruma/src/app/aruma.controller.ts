@@ -32,7 +32,17 @@ export class ArumaController {
     return 'Working';
   }
 
-  //Receives notification from the NDIS
+  //Phase 1: Request SB_REPORT
+  @UseGuards(AuthBearerGuard)
+  @Post('/init')
+  async init() {
+    this.arumaService.initWebScrapper();
+  }
+
+  //Phase 2: 
+  //   Receives notification from the NDIS,
+  //   request remaining data and
+  //   generate partial files
   @UseGuards(AuthBasicNotificationGuard)
   @Post('/weebhook/notification/:deviceName')
   async notificationsWebhook(
@@ -44,7 +54,7 @@ export class ArumaController {
     const deviceName = params['deviceName'];
 
     if (eventId === 'SB_REPORT' && deviceName != null) {
-      this.arumaService.processSbReportNotifications(body, deviceName);
+      this.arumaService.processSbReportNotification(body, deviceName);
     }
 
     this.logger.log(
@@ -61,9 +71,10 @@ export class ArumaController {
     };
   }
 
+  //Phase 3: Create final CSV files and upload
   @UseGuards(AuthBearerGuard)
-  @Post('/')
-  async init() {
-    this.arumaService.initWebScrapper();
+  @Post('/finalise')
+  async finalise() {
+    this.arumaService.createResultFilesAndUpload();
   }
 }
