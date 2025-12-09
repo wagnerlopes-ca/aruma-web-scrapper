@@ -34,9 +34,9 @@ export class ArumaController {
 
   //Phase 1: Request SB_REPORT
   @UseGuards(AuthBearerGuard)
-  @Post('/init')
-  async init() {
-    this.arumaService.initWebScrapper();
+  @Post('/request-reports')
+  async requestReports() {
+    this.arumaService.requestReports();
   }
 
   //Phase 2: 

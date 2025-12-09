@@ -10,7 +10,7 @@ export class BatchInitiatorService {
 
     //@Cron('0 3 * * *') // Daily at 3 AM
     async initiateDailyBatch() {
-        this.arumaService.initWebScrapper();
+        this.arumaService.requestReports();
 
         console.log(`Requesting SB_REPORT notifications!`);
     }

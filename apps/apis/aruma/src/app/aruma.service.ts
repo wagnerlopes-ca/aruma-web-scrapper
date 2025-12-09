@@ -205,7 +205,7 @@ export class ArumaService {
     }
   }
 
-  async initWebScrapper() {
+  async requestReports() {
     const url = '3.0/notifications/report';
     const method = 'POST';
     const body = { event_id: "SB_REPORT" }
@@ -299,39 +299,43 @@ export class ArumaService {
   }
 
   async processSbReportNotification(sbReportPayload: any, deviceName: string): Promise<string> {
-    const storagePath = this.configService.get<string>('STORAGE_PATH');
-    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-    const dateFolder = path.join(storagePath, today);
-    const resultsFolder = path.join(dateFolder, 'results');
-    const payloadsFolder = path.join(dateFolder, 'payloads');
-    const partialCsvsFolder = path.join(dateFolder, 'partials');
+    try {
+      const storagePath = this.configService.get<string>('STORAGE_PATH');
+      const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+      const dateFolder = path.join(storagePath, today);
+      const resultsFolder = path.join(dateFolder, 'results');
+      const payloadsFolder = path.join(dateFolder, 'payloads');
+      const partialCsvsFolder = path.join(dateFolder, 'partials');
 
-    // 1. Ensure the folder exists
-    await fs.mkdir(dateFolder, { recursive: true });
-    await fs.mkdir(resultsFolder, { recursive: true });
-    await fs.mkdir(payloadsFolder, { recursive: true });
-    await fs.mkdir(partialCsvsFolder, { recursive: true });
+      // 1. Ensure the folder exists
+      await fs.mkdir(dateFolder, { recursive: true });
+      await fs.mkdir(resultsFolder, { recursive: true });
+      await fs.mkdir(payloadsFolder, { recursive: true });
+      await fs.mkdir(partialCsvsFolder, { recursive: true });
 
-    // 2. Parse devices list from env
-    const devicesListString: string =
-      this.configService.get<string>('DEVICES_LIST');
-    const devicesList: DeviceDto[] = JSON.parse(devicesListString || '[]');
+      // 2. Parse devices list from env
+      const devicesListString: string =
+        this.configService.get<string>('DEVICES_LIST');
+      const devicesList: DeviceDto[] = JSON.parse(devicesListString || '[]');
 
-    // 3. Determine provider based on deviceName (event_id)
-    const device = devicesList.find(
-      (d) => d.deviceName === deviceName
-    );
-    const provider = device?.provider ?? '';
+      // 3. Determine provider based on deviceName (event_id)
+      const device = devicesList.find(
+        (d) => d.deviceName === deviceName
+      );
+      const provider = device?.provider ?? '';
 
-    const deviceUser = await this.deviceUserService.findOne(deviceName);
+      const deviceUser = await this.deviceUserService.findOne(deviceName);
 
-    // 4. Save Files
-    await this.saveSBReport(deviceName, partialCsvsFolder, sbReportPayload);
+      // 4. Save Files
+      await this.saveSBReport(deviceName, payloadsFolder, sbReportPayload);
 
-    //5. Generate partial CSV files
-    await this.saveSBDownloadPartial(deviceName, partialCsvsFolder, sbReportPayload, provider);
-    await this.generateServiceBookingsListPartial(device.deviceName, device.portal, sbReportPayload, deviceUser);
-    await this.generateServiceBookingDetailsAndSupportDetailsPartials(device.deviceName, device.portal, sbReportPayload, deviceUser);
+      //5. Generate partial CSV files
+      await this.saveSBDownloadPartial(deviceName, partialCsvsFolder, sbReportPayload, provider);
+      await this.generateServiceBookingsListPartial(device.deviceName, device.portal, sbReportPayload, deviceUser);
+      await this.generateServiceBookingDetailsAndSupportDetailsPartials(device.deviceName, device.portal, sbReportPayload, deviceUser);
+    } catch (exception) {
+      this.logger.fatal(exception);
+    }
 
     return null;
   }
