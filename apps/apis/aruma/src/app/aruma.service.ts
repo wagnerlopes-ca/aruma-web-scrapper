@@ -206,33 +206,42 @@ export class ArumaService {
   }
 
   async requestReports() {
-    const url = '3.0/notifications/report';
-    const method = 'POST';
-    const body = { event_id: "SB_REPORT" }
-    const headers = null;
-    const queryObject = null;
-    const clientName = "Aruma";
-    const saveTransaction = false;
+    try {
+      const url = '3.0/notifications/report';
+      const method = 'POST';
+      const body = { event_id: "SB_REPORT" }
+      const headers = null;
+      const queryObject = null;
+      const clientName = "Aruma";
+      const saveTransaction = false;
 
-    const devicesListString: string = this.configService.get(EnvConstants.DEVICES_LIST);
-    const deviceList: DeviceDto[] = JSON.parse(devicesListString);
+      const devicesListString: string = this.configService.get(EnvConstants.DEVICES_LIST);
+      const deviceList: DeviceDto[] = JSON.parse(devicesListString);
 
-    deviceList.forEach(async deviceObject => {
-      const deviceUser = await this.deviceUserService.findOne(deviceObject.deviceName);
+      this.logger.log({
+        devicesListString: devicesListString,
+        deviceList: deviceList
+      });
 
-      this.defaultRequest(
-        url,
-        method,
-        body,
-        headers,
-        queryObject,
-        deviceObject.deviceName,
-        clientName,
-        saveTransaction,
-        deviceUser
-      )
-      console.log(Date.now().toLocaleString());
-    });
+      deviceList.forEach(async deviceObject => {
+        const deviceUser = await this.deviceUserService.findOne(deviceObject.deviceName);
+
+        this.defaultRequest(
+          url,
+          method,
+          body,
+          headers,
+          queryObject,
+          deviceObject.deviceName,
+          clientName,
+          saveTransaction,
+          deviceUser
+        )
+        console.log(Date.now().toLocaleString());
+      });
+    } catch(exception) {
+      this.logger.fatal(exception);
+    }
   }
 
   async saveSBReport(deviceName: string, payloadsFolder: string, sbReportPayload: any) {
@@ -718,7 +727,7 @@ export class ArumaService {
     const sftpHost = this.configService.get<string>(EnvConstants.SFTP_HOST);
     const sftpPort = parseInt(this.configService.get<string>(EnvConstants.SFTP_PORT) || '22', 10);
     const sftpUserName = this.configService.get<string>(EnvConstants.SFTP_USERNAME);
-    const sftpRemotePath = this.configService.get<string>(EnvConstants.SFTP_REMOTE_PATH) || '/uploads';
+    const sftpRemotePath = this.configService.get<string>(EnvConstants.SFTP_REMOTE_PATH) || '/Bookings';
     const sftpKey = this.configService.get<string>(EnvConstants.SFTP_PRIVATE_KEY);
 
     const sftp = new Client();
