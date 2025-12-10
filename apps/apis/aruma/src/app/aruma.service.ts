@@ -224,22 +224,26 @@ export class ArumaService {
       });
 
       deviceList.forEach(async deviceObject => {
-        const deviceUser = await this.deviceUserService.findOne(deviceObject.deviceName);
+        try {
+          const deviceUser = await this.deviceUserService.findOne(deviceObject.deviceName);
 
-        this.defaultRequest(
-          url,
-          method,
-          body,
-          headers,
-          queryObject,
-          deviceObject.deviceName,
-          clientName,
-          saveTransaction,
-          deviceUser
-        )
-        console.log(Date.now().toLocaleString());
+          this.defaultRequest(
+            url,
+            method,
+            body,
+            headers,
+            queryObject,
+            deviceObject.deviceName,
+            clientName,
+            saveTransaction,
+            deviceUser
+          )
+          console.log(Date.now().toLocaleString());
+        } catch (exception) {
+          this.logger.fatal(exception);
+        }
       });
-    } catch(exception) {
+    } catch (exception) {
       this.logger.fatal(exception);
     }
   }
