@@ -692,12 +692,43 @@ export class ArumaService {
   }
 
   async createResultFilesAndUpload() {
+    await this.clearTodaysResultsFolder();
+    
     await this.generateResultFiles(this.SB_DOWNLOAD_PREFIX);
     await this.generateResultFiles(this.SERVICE_BOOKING_DETAILS_PREFIX);
     await this.generateResultFiles(this.SUPPORT_DETAILS_PREFIX);
     await this.generateResultFiles(this.SERVICE_BOOKING_LIST_PREFIX);
 
     await this.uploadResultsToSftp();
+  }
+
+  async clearTodaysResultsFolder() {
+    const storagePath = this.configService.get<string>('STORAGE_PATH');
+    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    const resultsFolder = path.join(storagePath, today, 'results');
+
+    try {
+      const files = await fs.readdir(resultsFolder);
+
+      // Delete each file/folder inside
+      const deletePromises = files.map(file => {
+        const filePath = path.join(resultsFolder, file);
+        return fs.rm(filePath, { recursive: true, force: true });
+      });
+
+      await Promise.all(deletePromises);
+      console.log(`Cleared contents of ${resultsFolder}`);
+    } catch (error: any) {
+      if (error.code === 'ENOENT') {
+        // Folder doesn't exist yet → that's fine (first run of the day)
+        console.log(`Results folder not found (yet): ${resultsFolder} → nothing to clear`);
+        // Optionally create it so future writes don't fail
+        await fs.mkdir(resultsFolder, { recursive: true });
+      } else {
+        console.error('Error clearing results folder:', error);
+        throw error;
+      }
+    }
   }
 
   private async uploadResultsToSftp(): Promise<void> {
