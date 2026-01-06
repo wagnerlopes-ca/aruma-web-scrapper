@@ -24,6 +24,7 @@
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.2",
     "crypto-js": "^4.2.0",
+    "csv-parser": "^3.2.0",
     "csv-writer": "^1.6.0",
     "date-fns": "^4.1.0",
     "jsforce": "^3.2.0",

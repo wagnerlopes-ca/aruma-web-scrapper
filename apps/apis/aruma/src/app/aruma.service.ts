@@ -14,10 +14,12 @@ import * as path from 'path';
 import { promises as fs } from 'fs';
 import { format } from 'date-fns';
 import { createObjectCsvWriter } from 'csv-writer';
+import csvParser from 'csv-parser';
 import { DeviceUsersDto } from './device-users/dto/device-users.dto';
 import { JwtService } from '@nestjs/jwt';
 //import { CsvUploaderService } from './csv-uploader/csv-uploader.service';
 import Client from 'ssh2-sftp-client';
+import { Transform } from 'stream';
 
 @Injectable()
 export class ArumaService {
@@ -50,19 +52,6 @@ export class ArumaService {
     saveTransaction: boolean,
     deviceUser: DeviceUsersDto
   ): Promise<Response> {
-    this.logger.log({
-      message: `Request received!`,
-      requestElements: {
-        method,
-        path,
-        extraHeaders,
-        requestBody,
-        deviceName,
-        clientName,
-        queryObject
-      }
-    });
-
     return await this.ndisService.sendRequest(
       method,
       path,
@@ -158,6 +147,72 @@ export class ArumaService {
     }
   }
 
+  public async csvToBulkPaymentPayloads(
+    csvString: string,
+    maxItemsPerRequest: number = 5000
+  ): Promise<Array<{ bulk_payment_request: any[] }>> {
+    const rows: any[] = [];
+
+    // Parse CSV string into rows
+    await new Promise<void>((resolve, reject) => {
+      const parser = csvParser({
+        mapHeaders: ({ header }) => header.trim(), // clean headers
+      });
+
+      const stringStream = new Transform({
+        writableObjectMode: true,
+        transform(chunk, encoding, callback) {
+          this.push(chunk);
+          callback();
+        },
+      });
+
+      stringStream.end(csvString);
+
+      stringStream
+        .pipe(parser)
+        .on('data', (row) => rows.push(row))
+        .on('end', () => resolve())
+        .on('error', (err) => reject(err));
+    });
+
+    // Transform rows into the desired payload format
+    const items = rows.map((row) => {
+      const participant = row.NDISNUMBER ? Number(row.NDISNUMBER) : null;
+      const quantity = row.QUANTITY ? parseFloat(row.QUANTITY.replace(',', '.')) : 0;
+
+      return {
+        participant: participant,
+        start_date: row.SUPPORTSDELIVEREDFROM,
+        end_date: row.SUPPORTSDELIVEREDTO,
+        product_category_item: row.SUPPORTNUMBER,
+        ref_doc_no: row.CLAIMREFERENCE,
+        quantity: quantity,
+        unit_price: parseFloat(row.UNITPRICE),
+        tax_code: row.GSTCODE || '',
+        authorised_by: row.AUTHORISEDBY || '',
+        participant_approved: participant, // assuming same as NDISNUMBER when approved
+        inkind_flag: row.PARTICIPANTAPPROVED === 'True',
+        claim_type: row.CLAIMTYPE || '',
+        claim_reason: row.CANCELLATIONREASON || '',
+        abn_provider: row.ABNOFSUPPORTPROVIDER ? Number(row.ABNOFSUPPORTPROVIDER) : null,
+        abn_not_available: false,
+        exemption_reason: 'null', // as per your example
+      };
+    });
+
+    // Chunk into arrays of maxItemsPerRequest
+    const chunks: Array<{ bulk_payment_request: any[] }> = [];
+    for (let i = 0; i < items.length; i += maxItemsPerRequest) {
+      const chunk = items.slice(i, i + maxItemsPerRequest);
+      chunks.push({
+        bulk_payment_request: chunk,
+      });
+    }
+
+    return chunks;
+  }
+
   async formatError(error) {
     if (error instanceof HttpException) {
       const response = error.getResponse();
@@ -237,8 +292,7 @@ export class ArumaService {
             clientName,
             saveTransaction,
             deviceUser
-          )
-          console.log(Date.now().toLocaleString());
+          );
         } catch (exception) {
           this.logger.fatal(exception);
         }
@@ -246,6 +300,10 @@ export class ArumaService {
     } catch (exception) {
       this.logger.fatal(exception);
     }
+  }
+
+  sleep(ms: number) {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   async saveSBReport(deviceName: string, payloadsFolder: string, sbReportPayload: any) {
@@ -303,6 +361,8 @@ export class ArumaService {
         { id: 'provider', title: 'provider' },
         { id: 'status', title: 'status' },
       ],
+      alwaysQuote: true,
+      recordDelimiter: '\r\n'
     });
 
     // 4. Write CSV
@@ -513,6 +573,8 @@ export class ArumaService {
         { id: 'status', title: 'status' },
         { id: 'virtual_status', title: 'virtual_status' },
       ],
+      alwaysQuote: true,
+      recordDelimiter: '\r\n'
     });
 
     await csvWriter.writeRecords(allBookings);
@@ -663,6 +725,8 @@ export class ArumaService {
         { id: 'total', title: 'total' },
         { id: 'extract_time', title: 'extract_time' },
       ],
+      alwaysQuote: true,
+      recordDelimiter: '\r\n'
     });
 
     const sdCsvWriter = createObjectCsvWriter({
@@ -679,6 +743,8 @@ export class ArumaService {
         { id: 'extract_time', title: 'extract_time' },
         { id: 'unit_price', title: 'unit_price' },
       ],
+      alwaysQuote: true,
+      recordDelimiter: '\r\n'
     });
 
     if (allServiceBookings.length > 0) await sbCsvWriter.writeRecords(allServiceBookings);
@@ -693,7 +759,7 @@ export class ArumaService {
 
   async createResultFilesAndUpload() {
     await this.clearTodaysResultsFolder();
-    
+
     await this.generateResultFiles(this.SB_DOWNLOAD_PREFIX);
     await this.generateResultFiles(this.SERVICE_BOOKING_DETAILS_PREFIX);
     await this.generateResultFiles(this.SUPPORT_DETAILS_PREFIX);
