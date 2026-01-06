@@ -459,7 +459,7 @@ export class ArumaService {
       const finalCsvName = `${prefix}_${timestamp}.csv`;
       const finalCsvPath = path.join(resultsFolder, finalCsvName);
 
-      await fs.writeFile(finalCsvPath, combinedLines.join('\n'), 'utf-8');
+      await fs.writeFile(finalCsvPath, combinedLines.join('\r\n'), 'utf-8');
 
       console.log(`✅ Combined CSV created: ${finalCsvPath}`);
       return finalCsvPath;
