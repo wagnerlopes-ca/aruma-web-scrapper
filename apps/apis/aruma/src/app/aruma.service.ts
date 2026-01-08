@@ -656,13 +656,13 @@ export class ArumaService {
 
           // 1️⃣ ServiceBookingDetails
           const serviceRow = {
-            participant_name: `${result.participant_name?.toUpperCase()}(${result.participant})`,
+            participant_name: `${result.participant_name}(${result.participant})`,
             booking_type: this.translateBookingType(result.booking_type),
             service_booking_id: result.service_booking_id,
             start_date: this.formatDate(result.start_date),
             end_date: this.formatDate(result.end_date),
-            revised_end_date: this.formatDate(result.revised_end_date || '0000-00-00'),
-            in_kind_program: result.inkind_program ? 'TRUE' : 'FALSE',
+            revised_end_date: this.formatDate(result.revised_end_date || '00/00/0000'),
+            in_kind_program: result.inkind_program ? 'true' : 'false',
             status: result.status,
             virtual_status: result.virtual_status,
             total: result.items?.reduce((sum: number, i: any) => sum + (i.allocated_amount || 0), 0).toFixed(2),
