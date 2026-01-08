@@ -440,9 +440,14 @@ export class ArumaService {
           }
 
           if (i === 0) {
-            combinedLines.push(...lines);
+            //Remove quotes from the header to match the current system
+            const headerRow = lines[0].replace(/"/g, '');
+
+            //Combine header without quotes with the data with quotes
+            combinedLines.push(headerRow, ...lines.slice(1));
           } else {
-            combinedLines.push(...lines.slice(1)); // skip header
+            //Skip header
+            combinedLines.push(...lines.slice(1));
           }
         } catch (err: any) {
           console.error(`❌ Error reading ${csvFiles[i]}: ${err.message}`);
