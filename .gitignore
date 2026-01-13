@@ -43,7 +43,7 @@ Thumbs.db
 # Environments
 *.env*
 
-.nx/cache
+.nx*
 
 #Keys
 *.pem

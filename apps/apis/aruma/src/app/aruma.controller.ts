@@ -77,4 +77,11 @@ export class ArumaController {
   async finalise() {
     this.arumaService.createResultFilesAndUpload();
   }
+
+  //Phase 3: Create final CSV files and upload
+  @UseGuards(AuthBearerGuard)
+  @Post('/finops')
+  async finops(@Body() body) {
+    this.arumaService.postPaymentsBatchFile(body.FileName);
+  }
 }

@@ -147,10 +147,194 @@ export class ArumaService {
     }
   }
 
-  public async csvToBulkPaymentPayloads(
-    csvString: string,
-    maxItemsPerRequest: number = 5000
+  public async postPaymentsBatchFile(sftpFileName: string) {
+    try {
+      const sftpFolder = 'Claims';
+
+      const csvString = await this.downloadFileFromSftp(sftpFileName, sftpFolder);
+
+      const csvRows: any[] = await this.parseCsvStringIntoArray(csvString);
+
+      const deviceName = this.getDeviceNameFromCsv(csvRows);
+
+      if (deviceName) {
+        //List with maximum of 5000 items
+        const requestBodyList = await this.csvToBulkPaymentPayloads(csvRows);
+
+        for (let i = 0; i < requestBodyList.length; i++) {
+          const body = requestBodyList[i];
+
+          await this.postPaymentBatch(body, deviceName);
+        }
+      }
+    } catch (exception) {
+      this.logger.fatal(exception);
+    }
+  }
+
+  private getDeviceNameFromCsv(csvRows: any[]) {
+    const devicesListString: string = this.configService.get(EnvConstants.DEVICES_LIST);
+    const deviceList: DeviceDto[] = JSON.parse(devicesListString);
+    const providerNumber = csvRows[0].REGISTRATIONNUMBER;
+
+    for (let i = 0; i < deviceList.length; i++) {
+      if (deviceList[i].provider == providerNumber) {
+        return deviceList[i].deviceName;
+      }
+    }
+
+    return null;
+  }
+
+  private getBatchReferenceName() {
+    const now = new Date();
+
+    const YY = now.getFullYear().toString().slice(-2);              // 26
+    const MM = String(now.getMonth() + 1).padStart(2, '0');         // 01–12
+    const DD = String(now.getDate()).padStart(2, '0');              // 01–31
+    const HH = String(now.getHours()).padStart(2, '0');             // 00–23
+    const mm = String(now.getMinutes()).padStart(2, '0');           // 00–59
+    const SS = String(now.getSeconds()).padStart(2, '0');           // 00–59
+    const mmm = String(now.getMilliseconds()).padStart(3, '0');      // 000–999
+
+    return `${YY}${MM}${DD}${HH}${mm}${SS}${mmm}.csv`;
+  }
+
+  private async postPaymentBatch(body: any, deviceName: string) {
+    const url = '4.0/payments/batch';
+    const method = 'POST';
+    const headers = {
+      batch_reference_name: this.getBatchReferenceName(),
+      "Content-Type": "application/json"
+    };
+    const queryObject = null;
+    const clientName = "Aruma";
+    const saveTransaction = false;
+
+
+    try {
+      const deviceUser = await this.deviceUserService.findOne(deviceName);
+
+      await this.defaultRequest(
+        url,
+        method,
+        body,
+        headers,
+        queryObject,
+        deviceName,
+        clientName,
+        saveTransaction,
+        deviceUser
+      );
+    } catch (exception) {
+      this.logger.fatal(exception);
+    }
+  }
+
+  /**
+   * Downloads a file from SFTP server and returns its content as string
+   * @param remoteFileName Name of the file (e.g. 'SBDownload_20250113.csv')
+   * @param remoteFolder Remote folder path (e.g. '/Bookings' or '/Bookings/2025-01')
+   * @returns Promise<string> Content of the remote file
+   * @throws Error if connection fails, file not found, or permission denied
+   */
+  private async downloadFileFromSftp(
+    remoteFileName: string,
+    remoteFolder: string
+  ): Promise<string> {
+    const sftpHost = this.configService.get<string>(EnvConstants.SFTP_HOST);
+    const sftpPort = parseInt(this.configService.get<string>(EnvConstants.SFTP_PORT) || '22', 10);
+    const sftpUserName = this.configService.get<string>(EnvConstants.SFTP_USERNAME);
+    const sftpKey = this.configService.get<string>(EnvConstants.SFTP_PRIVATE_KEY);
+
+    const sftp = new Client();
+
+    try {
+      await sftp.connect({
+        host: sftpHost,
+        port: sftpPort,
+        username: sftpUserName,
+        privateKey: sftpKey,
+      });
+
+      this.logger.log(`Connected to SFTP for download: ${sftpHost}`);
+
+      // Build full remote path
+      const remotePath = `${remoteFolder.replace(/\/$/, '')}/${remoteFileName}`;
+
+      // Check if file exists
+      const exists = await sftp.exists(remotePath);
+      if (!exists) {
+        throw new Error(`Remote file not found: ${remotePath}`);
+      }
+
+      // Download file content directly to buffer
+      const contentBuffer = await sftp.get(remotePath);
+
+      // Assuming the files are text/CSV → convert to UTF-8 string
+      const content = contentBuffer.toString('utf-8');
+
+      this.logger.log(`Downloaded file successfully: ${remotePath} (${content.length} characters)`);
+
+      return content;
+
+    } catch (err) {
+      this.logger.error(`SFTP download failed for ${remoteFileName}: ${err.message}`);
+      throw err;
+    } finally {
+      try {
+        sftp.end();
+        this.logger.debug('SFTP connection closed after download');
+      } catch (closeErr) {
+        // ignore close errors in finally block
+      }
+    }
+  }
+
+  private async csvToBulkPaymentPayloads(
+    rows: any[]
   ): Promise<Array<{ bulk_payment_request: any[] }>> {
+    const maxItemsPerRequest = 5000;
+
+    // Transform rows into the desired payload format
+    const items = rows.map((row) => {
+      const participant = row.NDISNUMBER ? Number(row.NDISNUMBER) : null;
+      const quantity = row.QUANTITY ? parseFloat(row.QUANTITY.replace(',', '.')) : 0;
+
+      return {
+        participant: participant,
+        start_date: row.SUPPORTSDELIVEREDFROM,
+        end_date: row.SUPPORTSDELIVEREDTO,
+        product_category_item: row.SUPPORTNUMBER,
+        ref_doc_no: row.CLAIMREFERENCE,
+        quantity: quantity,
+        unit_price: parseFloat(row.UNITPRICE),
+        tax_code: row.GSTCODE || '',
+        authorised_by: row.AUTHORISEDBY || '',
+        participant_approved: participant,
+        inkind_flag: row.PARTICIPANTAPPROVED === 'True',
+        claim_type: row.CLAIMTYPE || '',
+        claim_reason: row.CANCELLATIONREASON || '',
+        abn_provider: row.ABNOFSUPPORTPROVIDER ? Number(row.ABNOFSUPPORTPROVIDER) : null,
+        abn_not_available: false,
+        exemption_reason: '',
+        hours: row.HOURS
+      };
+    });
+
+    // Chunk into arrays of maxItemsPerRequest
+    const chunks: Array<{ bulk_payment_request: any[] }> = [];
+    for (let i = 0; i < items.length; i += maxItemsPerRequest) {
+      const chunk = items.slice(i, i + maxItemsPerRequest);
+      chunks.push({
+        bulk_payment_request: chunk,
+      });
+    }
+
+    return chunks;
+  }
+
+  private async parseCsvStringIntoArray(csvString: string) {
     const rows: any[] = [];
 
     // Parse CSV string into rows
@@ -176,41 +360,7 @@ export class ArumaService {
         .on('error', (err) => reject(err));
     });
 
-    // Transform rows into the desired payload format
-    const items = rows.map((row) => {
-      const participant = row.NDISNUMBER ? Number(row.NDISNUMBER) : null;
-      const quantity = row.QUANTITY ? parseFloat(row.QUANTITY.replace(',', '.')) : 0;
-
-      return {
-        participant: participant,
-        start_date: row.SUPPORTSDELIVEREDFROM,
-        end_date: row.SUPPORTSDELIVEREDTO,
-        product_category_item: row.SUPPORTNUMBER,
-        ref_doc_no: row.CLAIMREFERENCE,
-        quantity: quantity,
-        unit_price: parseFloat(row.UNITPRICE),
-        tax_code: row.GSTCODE || '',
-        authorised_by: row.AUTHORISEDBY || '',
-        participant_approved: participant, // assuming same as NDISNUMBER when approved
-        inkind_flag: row.PARTICIPANTAPPROVED === 'True',
-        claim_type: row.CLAIMTYPE || '',
-        claim_reason: row.CANCELLATIONREASON || '',
-        abn_provider: row.ABNOFSUPPORTPROVIDER ? Number(row.ABNOFSUPPORTPROVIDER) : null,
-        abn_not_available: false,
-        exemption_reason: 'null', // as per your example
-      };
-    });
-
-    // Chunk into arrays of maxItemsPerRequest
-    const chunks: Array<{ bulk_payment_request: any[] }> = [];
-    for (let i = 0; i < items.length; i += maxItemsPerRequest) {
-      const chunk = items.slice(i, i + maxItemsPerRequest);
-      chunks.push({
-        bulk_payment_request: chunk,
-      });
-    }
-
-    return chunks;
+    return rows;
   }
 
   async formatError(error) {
@@ -272,11 +422,6 @@ export class ArumaService {
 
       const devicesListString: string = this.configService.get(EnvConstants.DEVICES_LIST);
       const deviceList: DeviceDto[] = JSON.parse(devicesListString);
-
-      this.logger.log({
-        devicesListString: devicesListString,
-        deviceList: deviceList
-      });
 
       deviceList.forEach(async deviceObject => {
         try {
