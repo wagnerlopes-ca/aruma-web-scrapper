@@ -506,8 +506,7 @@ export class ArumaService {
         { id: 'provider', title: 'provider' },
         { id: 'status', title: 'status' },
       ],
-      alwaysQuote: true,
-      recordDelimiter: '\r\n'
+      alwaysQuote: true
     });
 
     // 4. Write CSV
@@ -723,8 +722,7 @@ export class ArumaService {
         { id: 'status', title: 'status' },
         { id: 'virtual_status', title: 'virtual_status' },
       ],
-      alwaysQuote: true,
-      recordDelimiter: '\r\n'
+      alwaysQuote: true
     });
 
     await csvWriter.writeRecords(allBookings);
@@ -875,8 +873,7 @@ export class ArumaService {
         { id: 'total', title: 'total' },
         { id: 'extract_time', title: 'extract_time' },
       ],
-      alwaysQuote: true,
-      recordDelimiter: '\r\n'
+      alwaysQuote: true
     });
 
     const sdCsvWriter = createObjectCsvWriter({
@@ -893,8 +890,7 @@ export class ArumaService {
         { id: 'extract_time', title: 'extract_time' },
         { id: 'unit_price', title: 'unit_price' },
       ],
-      alwaysQuote: true,
-      recordDelimiter: '\r\n'
+      alwaysQuote: true
     });
 
     if (allServiceBookings.length > 0) await sbCsvWriter.writeRecords(allServiceBookings);
