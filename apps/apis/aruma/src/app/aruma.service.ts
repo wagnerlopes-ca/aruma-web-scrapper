@@ -833,7 +833,7 @@ export class ArumaService {
                 service_booking_id: result.service_booking_id,
                 No: counter,
                 extract_time: extractTime,
-                unit_price: item.allocated_amount && item.quantity ? (item.allocated_amount / item.quantity).toFixed(2) : '',
+                unit_price: item.allocated_amount && item.quantity ? (item.allocated_amount / item.quantity).toFixed(2) : 0,
               };
               allSupportDetails.push(supportRow);
               counter++;
