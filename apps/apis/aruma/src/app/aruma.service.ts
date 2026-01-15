@@ -470,8 +470,8 @@ export class ArumaService {
       booking_type: this.translateBookingType(r.booking_type),
       service_booking_id: r.service_booking_id,
       initiated_by: r.initiated_by,
-      product_category: r.product_category,
-      product_category_item: r.product_category_item,
+      product_category: r.product_category || "",
+      product_category_item: r.product_category_item || "",
       quantity: r.quantity,
       start_date: r.start_date + ' 00:00:00.000',
       end_date: r.end_date + ' 00:00:00.000',
@@ -608,7 +608,8 @@ export class ArumaService {
       const finalCsvName = `${prefix}_${timestamp}.csv`;
       const finalCsvPath = path.join(resultsFolder, finalCsvName);
 
-      await fs.writeFile(finalCsvPath, combinedLines.join('\r\n'), 'utf-8');
+      const contentToWrite = combinedLines.join('\n') + '\n';
+      await fs.writeFile(finalCsvPath, contentToWrite, 'utf-8');
 
       console.log(`✅ Combined CSV created: ${finalCsvPath}`);
       return finalCsvPath;
@@ -1022,20 +1023,20 @@ export class ArumaService {
 
     const translationMap: Record<string, string> = {
       ASSISTIVE_TECHNOLOGY: 'Assistive Technology',
-      CB_CHOICE_CONTROL: 'Improved Life Choices',
-      CB_DAILY_ACTIVITY: 'Improved Daily Living Skills',
-      CB_EMPLOYMENT: 'Finding and Keeping a Job',
-      CB_HEALTH_WELLBEING: 'Improved Health and Wellbeing',
-      CB_HOME_LIVING: 'Improved Living Arrangements',
-      CB_LIFELONG_LEARNING: 'Improved Learning',
-      CB_RELATIONSHIPS: 'Improved Relationships',
-      CB_SOCIAL_COMMUNITY_CIVIC: 'Increased Social and Community Participation',
+      CB_CHOICE_CONTROL: 'CB Choice & Control',
+      CB_DAILY_ACTIVITY: 'CBDaily Activity',
+      CB_EMPLOYMENT: 'CB Employment',
+      CB_HEALTH_WELLBEING: 'CB Health & Wellbeing',
+      CB_HOME_LIVING: 'CB Home Living',
+      CB_LIFELONG_LEARNING: 'CB Lifelong Learning',
+      CB_RELATIONSHIPS: 'CB Relationships',
+      CB_SOCIAL_COMMUNITY_CIVIC: 'CB SocialCommunity and Civic participa',
       CONSUMABLES: 'Consumables',
-      DAILY_ACTIVITIES: 'Assistance with Daily Life',
+      DAILY_ACTIVITIES: 'Daily Activities',
       HOME_MODIFICATIONS: 'Home Modifications',
-      SOCIAL_COMMUNITY_CIVIC: 'Assistance with Social, Economic and Community Participation',
+      SOCIAL_COMMUNITY_CIVIC: 'Social Community and Civic Participation',
       SUPPORT_COORDINATION: 'Support Coordination',
-      TRANSPORT: 'Transport (Auto Payments)',
+      TRANSPORT: 'Transport',
     };
 
     return translationMap[category] || '';
