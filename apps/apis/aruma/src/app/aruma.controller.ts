@@ -53,9 +53,12 @@ export class ArumaController {
     const eventId = request.headers['event_id'] || request.headers['eventid'];
     const deviceName = params['deviceName'];
 
-    if (eventId === 'SB_REPORT' && deviceName != null) {
-      this.arumaService.processSbReportNotification(body, deviceName);
-    }
+    this.arumaService.processNotification(body, deviceName, eventId);
+
+    //Create a new method in ArumaService to check the report type and handle them as required
+    // Expected notifications:
+    // Web Scrapper: SB_REPORT
+    // Finops: BULK_PROCESS_FINISH, BULK_CLAIM_REPORT, REMIT_ADV_GENERATED (These )
 
     this.logger.log(
       {
@@ -78,10 +81,21 @@ export class ArumaController {
     this.arumaService.createResultFilesAndUpload();
   }
 
-  //Phase 3: Create final CSV files and upload
+  //Finops: GET payments batch
+  @UseGuards(AuthBearerGuard)
+  @Get('/payments/batch')
+  async getPaymentsBatch() {
+    return this.arumaService.getAllBatches();
+  }
+
+  //Finops: POST payments batch
   @UseGuards(AuthBearerGuard)
   @Post('/payments/batch')
-  async finops(@Body() body) {
+  async postPaymentsBatch(@Body() body) {
     this.arumaService.postPaymentsBatchFile(body.FileName);
+
+    return {
+      message: 'Received'
+    }
   }
 }

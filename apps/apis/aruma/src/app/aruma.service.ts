@@ -1,7 +1,8 @@
 import {
   Injectable,
   Logger,
-  HttpException
+  HttpException,
+  InternalServerErrorException
 } from '@nestjs/common';
 import { NDISService } from '@app/ndis';
 import { PlannedOutagesService } from './planned-outages/planned-outages.service';
@@ -20,10 +21,12 @@ import { JwtService } from '@nestjs/jwt';
 //import { CsvUploaderService } from './csv-uploader/csv-uploader.service';
 import Client from 'ssh2-sftp-client';
 import { Transform } from 'stream';
+import Database from 'better-sqlite3';
 
 @Injectable()
 export class ArumaService {
   private readonly logger = new Logger(ArumaService.name);
+  private db: Database;
 
   private readonly SB_DOWNLOAD_PREFIX = 'SBDownload';
   private readonly SERVICE_BOOKING_LIST_PREFIX = 'ServiceBookingList';
@@ -35,7 +38,9 @@ export class ArumaService {
     private readonly plannedOutagesService: PlannedOutagesService,
     private readonly configService: ConfigService,
     private readonly deviceUserService: DeviceUsersService
-  ) { }
+  ) {
+    this.initializeDbConnection();
+  }
 
   public async stopIfOutage() {
     return this.plannedOutagesService.stopIfOutage();
@@ -197,14 +202,15 @@ export class ArumaService {
     const SS = String(now.getSeconds()).padStart(2, '0');           // 00–59
     const mmm = String(now.getMilliseconds()).padStart(3, '0');      // 000–999
 
-    return `${YY}${MM}${DD}${HH}${mm}${SS}${mmm}.csv`;
+    return `${YY}${MM}${DD}${HH}${mm}${SS}${mmm}.CSV`;
   }
 
   private async postPaymentBatch(body: any, deviceName: string) {
     const url = '4.0/payments/batch';
     const method = 'POST';
+    const batchReferenceName = this.getBatchReferenceName();
     const headers = {
-      batch_reference_name: this.getBatchReferenceName(),
+      batch_reference_name: batchReferenceName,
       "Content-Type": "application/json"
     };
     const queryObject = null;
@@ -226,6 +232,8 @@ export class ArumaService {
         saveTransaction,
         deviceUser
       );
+
+      await this.logBatchSubmission(batchReferenceName);
     } catch (exception) {
       this.logger.fatal(exception);
     }
@@ -451,7 +459,7 @@ export class ArumaService {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
-  async saveSBReport(deviceName: string, payloadsFolder: string, sbReportPayload: any) {
+  async saveReport(deviceName: string, payloadsFolder: string, sbReportPayload: any) {
     const jsonFilePath = path.join(payloadsFolder, `${sbReportPayload.event_id}_${deviceName}.json`);
     await fs.writeFile(jsonFilePath, JSON.stringify(sbReportPayload, null, 2), 'utf-8');
 
@@ -515,20 +523,114 @@ export class ArumaService {
     console.log(`✅ CSV saved in ${csvFilePath}`);
   }
 
-  async processSbReportNotification(sbReportPayload: any, deviceName: string): Promise<string> {
+  async processBulkProcessFinish(
+    deviceName: string,
+    folder: string,
+    payload: any,
+  ): Promise<string> {
+    // 1. Build filename
+    const timestamp = new Date().toISOString()
+      .replace(/[-:T.]/g, '')
+      .slice(2, 14); // YYMMDDHHmmss
+
+    const fileName = `BulkProcessFinish_${deviceName}_${timestamp}.csv`;
+
+    const csvFilePath = path.join(folder, fileName);
+
+    // 2. Extract data rows from payload
+    const rows = (payload.response || []).map((r: any) => ({
+      participant_name: r.participant_name ?? "",
+      participant: r.participant ?? "",
+      claim_number: r.claim_number ?? "",
+      claimed_amount: r.claimed_amount ?? "",
+      invoice_number: r.invoice_number ?? "",
+      claim_status: r.claim_status ?? "",
+      start_date: r.start_date ?? "",
+      end_date: r.end_date ?? "",
+      product_category: r.product_category ?? "",
+      product_category_item: r.product_category_item ?? "",
+      product_description: r.product_description ?? "",
+      claim_type: r.claim_type ?? "",
+      claim_reason: r.claim_reason ?? "",
+      amount: r.amount ?? "",
+      quantity: r.quantity ?? "",
+      tax_code: r.tax_code ?? "",
+      plan_id: r.plan_id ?? "",
+      service_agreement: r.service_agreement ?? "",
+      inkind_flag: r.inkind_flag?.toString() ?? "false",
+      submit_date: r.submit_date ?? "",
+      reject_reason_code: r.reject_reason_code ?? "",
+      paid_date: r.paid_date ?? "",
+      submit_by: r.submit_by ?? "",
+      abn_provider: r.abn_provider ?? "",
+      exemption_reason: r.exemption_reason ?? "",
+      ref_doc_no: r.ref_doc_no ?? "",
+      clearing_number: r.clearing_number ?? "",
+      claim_Reference: "",  // extra empty column as per your example
+    }));
+
+    // 3. Define CSV writer (headers must match CSV order)
+    const csvWriter = createObjectCsvWriter({
+      path: csvFilePath,
+      header: [
+        { id: 'participant_name', title: 'participant_name' },
+        { id: 'participant', title: 'participant' },
+        { id: 'claim_number', title: 'claim_number' },
+        { id: 'claimed_amount', title: 'claimed_amount' },
+        { id: 'invoice_number', title: 'invoice_number' },
+        { id: 'claim_status', title: 'claim_status' },
+        { id: 'start_date', title: 'start_date' },
+        { id: 'end_date', title: 'end_date' },
+        { id: 'product_category', title: 'product_category' },
+        { id: 'product_category_item', title: 'product_category_item' },
+        { id: 'product_description', title: 'product_description' },
+        { id: 'claim_type', title: 'claim_type' },
+        { id: 'claim_reason', title: 'claim_reason' },
+        { id: 'amount', title: 'amount' },
+        { id: 'quantity', title: 'quantity' },
+        { id: 'tax_code', title: 'tax_code' },
+        { id: 'plan_id', title: 'plan_id' },
+        { id: 'service_agreement', title: 'service_agreement' },
+        { id: 'inkind_flag', title: 'inkind_flag' },
+        { id: 'submit_date', title: 'submit_date' },
+        { id: 'reject_reason_code', title: 'reject_reason_code' },
+        { id: 'paid_date', title: 'paid_date' },
+        { id: 'submit_by', title: 'submit_by' },
+        { id: 'abn_provider', title: 'abn_provider' },
+        { id: 'exemption_reason', title: 'exemption_reason' },
+        { id: 'ref_doc_no', title: 'ref_doc_no' },
+        { id: 'clearing_number', title: 'clearing_number' },
+        { id: 'claim_Reference', title: 'claim_Reference' },
+      ],
+      alwaysQuote: true
+    });
+
+    // 4. Write CSV
+    await csvWriter.writeRecords(rows);
+
+    // Upload to SFTP if required
+    //const bulkProcessFinishRemoteFolder = 'ClaimsResponse';
+    //this.uploadToSftp(csvFilePath, fileName, bulkProcessFinishRemoteFolder);
+
+    console.log(`✅ Bulk process finish CSV saved in ${csvFilePath} (${rows.length} rows)`);
+
+    return csvFilePath;
+  }
+
+  async processNotification(notificationPayload: any, deviceName: string, eventId: string): Promise<string> {
     try {
       const storagePath = this.configService.get<string>('STORAGE_PATH');
       const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
       const dateFolder = path.join(storagePath, today);
       const resultsFolder = path.join(dateFolder, 'results');
-      const payloadsFolder = path.join(dateFolder, 'payloads');
       const partialCsvsFolder = path.join(dateFolder, 'partials');
+      const notificationsFolder = path.join(dateFolder, 'notifications');
 
       // 1. Ensure the folder exists
       await fs.mkdir(dateFolder, { recursive: true });
       await fs.mkdir(resultsFolder, { recursive: true });
-      await fs.mkdir(payloadsFolder, { recursive: true });
       await fs.mkdir(partialCsvsFolder, { recursive: true });
+      await fs.mkdir(notificationsFolder, { recursive: true });
 
       // 2. Parse devices list from env
       const devicesListString: string =
@@ -544,12 +646,15 @@ export class ArumaService {
       const deviceUser = await this.deviceUserService.findOne(deviceName);
 
       // 4. Save Files
-      await this.saveSBReport(deviceName, payloadsFolder, sbReportPayload);
+      await this.saveReport(deviceName, notificationsFolder, notificationPayload);
 
-      //5. Generate partial CSV files
-      await this.saveSBDownloadPartial(deviceName, partialCsvsFolder, sbReportPayload, provider);
-      await this.generateServiceBookingsListPartial(device.deviceName, device.portal, sbReportPayload, deviceUser);
-      await this.generateServiceBookingDetailsAndSupportDetailsPartials(device.deviceName, device.portal, sbReportPayload, deviceUser);
+      if (eventId === 'SB_REPORT') {
+        await this.saveSBDownloadPartial(deviceName, partialCsvsFolder, notificationPayload, provider);
+        await this.generateServiceBookingsListPartial(device.deviceName, device.portal, notificationPayload, deviceUser);
+        await this.generateServiceBookingDetailsAndSupportDetailsPartials(device.deviceName, device.portal, notificationPayload, deviceUser);
+      } else if (eventId === 'BULK_PROCESS_FINISH') {
+        this.processBulkProcessFinish(deviceName, notificationsFolder, notificationPayload);
+      }
     } catch (exception) {
       this.logger.fatal(exception);
     }
@@ -1016,6 +1121,66 @@ export class ArumaService {
     }
   }
 
+  private async uploadToSftp(
+    localFilePath: string,
+    remoteFileName: string,
+    remoteFolder: string
+  ): Promise<void> {
+    // 1. Validate local file exists
+    try {
+      await fs.access(localFilePath, fs.constants.R_OK);
+    } catch {
+      this.logger.error(`Local file not found or not readable: ${localFilePath}`);
+      throw new Error(`Cannot upload: file not accessible - ${localFilePath}`);
+    }
+
+    // 2. Load SFTP config
+    const config = {
+      host: this.configService.get<string>(EnvConstants.SFTP_HOST)!,
+      port: parseInt(this.configService.get<string>(EnvConstants.SFTP_PORT) || '22', 10),
+      username: this.configService.get<string>(EnvConstants.SFTP_USERNAME)!,
+      privateKey: this.configService.get<string>(EnvConstants.SFTP_PRIVATE_KEY),
+    };
+
+    const sftp = new Client();
+
+    try {
+      this.logger.log(`Connecting to SFTP: ${config.host}:${config.port}`);
+      await sftp.connect(config);
+
+      // 3. Normalize and ensure remote folder exists
+      const targetFolder = remoteFolder.replace(/\/$/, ''); // remove trailing slash
+      const remoteDirExists = await sftp.exists(targetFolder);
+
+      if (!remoteDirExists) {
+        await sftp.mkdir(targetFolder, true);
+        this.logger.log(`Created remote directory: ${targetFolder}`);
+      }
+
+      // 4. Build full remote path
+      const remoteFullPath = `${targetFolder}/${remoteFileName}`;
+
+      // 5. Upload
+      await sftp.fastPut(localFilePath, remoteFullPath, {
+        // optional: add some useful options if needed
+        // step: (total, step) => { ... progress logging ... }
+      });
+
+      this.logger.log(`⬆️ Uploaded: ${remoteFileName} → ${remoteFullPath}`);
+      this.logger.log('✅ File uploaded successfully');
+    } catch (err: any) {
+      this.logger.error(`SFTP upload failed for ${remoteFileName}: ${err.message}`);
+      throw err;
+    } finally {
+      try {
+        await sftp.end();
+        this.logger.debug('SFTP connection closed');
+      } catch {
+        // ignore close errors
+      }
+    }
+  }
+
   private translateProductCategory(rawCategory: string): string {
     if (!rawCategory) return '';
 
@@ -1060,6 +1225,86 @@ export class ArumaService {
       return format(d, 'dd/MM/yyyy');
     } catch {
       return dateStr;
+    }
+  }
+
+  private initializeDbConnection(): void {
+    const storagePath = this.configService.get<string>(EnvConstants.STORAGE_PATH);
+    const dbPath = path.join(storagePath, 'batches', 'batches.sqlite');
+
+    try {
+      this.db = new Database(dbPath, {});
+
+      // Apply pragmas every time (safe & idempotent)
+      this.db.pragma('journal_mode = WAL');
+      this.db.pragma('synchronous = NORMAL');
+      this.db.pragma('cache_size = -2000');
+
+      this.logger.log(`Connected to batches SQLite database: ${dbPath}`);
+    } catch (e) {
+      this.logger.fatal(e);
+      throw new InternalServerErrorException(e);
+    }
+  }
+
+  private async logBatchSubmission(batchRef: string): Promise<void> {
+    const now = new Date().toISOString();
+    const stmt = this.db.prepare(`
+      INSERT OR IGNORE INTO batches (batch_reference_name, submitted_at, status)
+      VALUES (?, ?, 'pending')
+    `);
+
+    const info = stmt.run(batchRef, now);
+
+    if (info.changes > 0) {
+      this.logger.log(`Logged new batch: ${batchRef}`);
+    }
+  }
+
+  async getAllBatches(statusFilter?: 'pending' | 'completed'): Promise<Array<{
+    id: number;
+    batch_reference_name: string;
+    submitted_at: string;
+    status: string;
+    completed_at: string | null;
+  }>> {
+    let query = `
+    SELECT 
+      id,
+      batch_reference_name,
+      submitted_at,
+      status,
+      completed_at
+    FROM batches
+  `;
+
+    const params: any[] = [];
+
+    if (statusFilter) {
+      query += ` WHERE status = ?`;
+      params.push(statusFilter);
+    }
+
+    query += ` ORDER BY submitted_at DESC`;
+
+    const stmt = this.db.prepare(query);
+
+    try {
+      const rows = stmt.all(...params) as Array<{
+        id: number;
+        batch_reference_name: string;
+        submitted_at: string;
+        status: string;
+        completed_at: string | null;
+      }>;
+
+      this.logger.debug(`Retrieved ${rows.length} batches` +
+        (statusFilter ? ` (status: ${statusFilter})` : ''));
+
+      return rows;
+    } catch (err: any) {
+      this.logger.error(`Failed to fetch batches: ${err.message}`);
+      throw err;
     }
   }
 }
