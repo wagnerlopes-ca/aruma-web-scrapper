@@ -95,7 +95,15 @@ export class ArumaController {
     this.arumaService.postPaymentsBatchFile(body.FileName);
 
     return {
-      message: 'Received'
+      success: true,
+      result: 'Batch payment process started'
     }
+  }
+
+  //Finops: Claim Nudge
+  @UseGuards(AuthBearerGuard)
+  @Post('/payments/nudge')
+  async postPaymentsNudge() {
+    return await this.arumaService.postPaymentsNudge();
   }
 }

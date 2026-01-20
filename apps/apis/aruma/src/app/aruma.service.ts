@@ -177,6 +177,31 @@ export class ArumaService {
     }
   }
 
+  public async postPaymentsNudge() {
+    const paymentsPending: Array<{
+      id: number;
+      batch_reference_name: string;
+      submitted_at: string;
+      status: string;
+      completed_at: string | null;
+    }> = await this.getAllBatches('pending');
+
+    for (let i = 0; i < paymentsPending?.length; i++) {
+      const element = paymentsPending[i];
+
+      this.logger.log(element);
+    }
+
+    if(paymentsPending?.length > 0) {
+      return paymentsPending;
+    } else {
+      return {
+        success: true,
+        result: 'No pending batches found!'
+      }
+    }
+  }
+
   private getDeviceNameFromCsv(csvRows: any[]) {
     const devicesListString: string = this.configService.get(EnvConstants.DEVICES_LIST);
     const deviceList: DeviceDto[] = JSON.parse(devicesListString);
@@ -216,7 +241,6 @@ export class ArumaService {
     const queryObject = null;
     const clientName = "Aruma";
     const saveTransaction = false;
-
 
     try {
       const deviceUser = await this.deviceUserService.findOne(deviceName);
@@ -611,6 +635,8 @@ export class ArumaService {
     // Upload to SFTP if required
     //const bulkProcessFinishRemoteFolder = 'ClaimsResponse';
     //this.uploadToSftp(csvFilePath, fileName, bulkProcessFinishRemoteFolder);
+
+    this.markBatchCompleted(payload.batch_reference_name);
 
     console.log(`✅ Bulk process finish CSV saved in ${csvFilePath} (${rows.length} rows)`);
 
@@ -1269,14 +1295,14 @@ export class ArumaService {
     completed_at: string | null;
   }>> {
     let query = `
-    SELECT 
-      id,
-      batch_reference_name,
-      submitted_at,
-      status,
-      completed_at
-    FROM batches
-  `;
+      SELECT 
+        id,
+        batch_reference_name,
+        submitted_at,
+        status,
+        completed_at
+      FROM batches
+    `;
 
     const params: any[] = [];
 
@@ -1306,5 +1332,37 @@ export class ArumaService {
       this.logger.error(`Failed to fetch batches: ${err.message}`);
       throw err;
     }
+  }
+
+  async markBatchCompleted(batchRef: string): Promise<void> {
+    const now = new Date().toISOString();
+
+    // First check current status (optional but useful for detailed logging)
+    const selectStmt = this.db.prepare(`
+      SELECT status FROM batches WHERE batch_reference_name = ?
+    `);
+
+    const row = selectStmt.get(batchRef) as { status: string } | undefined;
+
+    if (!row) {
+      this.logger.debug(`Batch not found: ${batchRef}`);
+      return;
+    }
+
+    if (row.status === 'completed') {
+      this.logger.debug(`Batch already completed: ${batchRef}`);
+      return;
+    }
+
+    // Proceed with update
+    const updateStmt = this.db.prepare(`
+      UPDATE batches
+      SET status = 'completed', completed_at = ?
+      WHERE batch_reference_name = ?
+    `);
+
+    updateStmt.run(now, batchRef);
+
+    this.logger.log(`Marked batch as completed: ${batchRef} at ${now}`);
   }
 }
