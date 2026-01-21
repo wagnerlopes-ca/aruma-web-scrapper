@@ -154,9 +154,10 @@ export class ArumaService {
 
   public async postPaymentsBatchFile(sftpFileName: string) {
     try {
-      const sftpFolder = 'Claims';
+      const sftpClaimFileFolder = 'Claims';
+      const sftpResultFileFolder = 'ClaimsResponse';
 
-      const csvString = await this.downloadFileFromSftp(sftpFileName, sftpFolder);
+      const csvString = await this.downloadFileFromSftp(sftpFileName, sftpClaimFileFolder);
 
       const csvRows: any[] = await this.parseCsvStringIntoArray(csvString);
 
@@ -176,6 +177,9 @@ export class ArumaService {
           this.logger.log(response);
 
           responseList.push(response);
+
+          const fileName = `PaymentBulkUpload_${sftpFileName}_${response.batch_reference_name}`;
+          this.uploadContentStringToSftp(JSON.stringify(response), fileName, sftpResultFileFolder);
         }
 
         return responseList;
@@ -200,7 +204,7 @@ export class ArumaService {
       this.logger.log(element);
     }
 
-    if(paymentsPending?.length > 0) {
+    if (paymentsPending?.length > 0) {
       return paymentsPending;
     } else {
       return {
@@ -647,7 +651,7 @@ export class ArumaService {
 
     // Upload to SFTP if required
     const bulkProcessFinishRemoteFolder = 'ClaimsResponse';
-    this.uploadToSftp(csvFilePath, fileName, bulkProcessFinishRemoteFolder);
+    this.uploadFileToSftp(csvFilePath, fileName, bulkProcessFinishRemoteFolder);
 
     this.markBatchCompleted(payload.batch_reference_name);
 
@@ -1160,7 +1164,69 @@ export class ArumaService {
     }
   }
 
-  private async uploadToSftp(
+  /**
+   * Uploads file content directly from a string (in memory) to SFTP.
+   * Useful when you generate CSV content in memory and don't want to write it to disk first.
+   */
+  private async uploadContentStringToSftp(
+    content: string,
+    remoteFileName: string,
+    remoteFolder: string
+  ): Promise<void> {
+    if (!content || typeof content !== 'string') {
+      this.logger.error('Invalid content provided for SFTP upload (must be non-empty string)');
+      throw new Error('Content must be a non-empty string');
+    }
+
+    // 1. Load SFTP config (same as before)
+    const config = {
+      host: this.configService.get<string>(EnvConstants.SFTP_HOST)!,
+      port: parseInt(this.configService.get<string>(EnvConstants.SFTP_PORT) || '22', 10),
+      username: this.configService.get<string>(EnvConstants.SFTP_USERNAME)!,
+      privateKey: this.configService.get<string>(EnvConstants.SFTP_PRIVATE_KEY),
+    };
+
+    const sftp = new Client();
+
+    try {
+      this.logger.log(`Connecting to SFTP: ${config.host}:${config.port}`);
+      await sftp.connect(config);
+
+      // 2. Normalize and ensure remote folder exists
+      const targetFolder = remoteFolder.replace(/\/$/, '');
+      const remoteDirExists = await sftp.exists(targetFolder);
+
+      if (!remoteDirExists) {
+        await sftp.mkdir(targetFolder, true);
+        this.logger.log(`Created remote directory: ${targetFolder}`);
+      }
+
+      // 3. Build full remote path
+      const remoteFullPath = `${targetFolder}/${remoteFileName}`;
+
+      // 4. Convert string content to Buffer (UTF-8)
+      const contentBuffer = Buffer.from(content, 'utf-8');
+
+      // 5. Upload from buffer
+      await sftp.put(contentBuffer, remoteFullPath);
+
+      this.logger.log(`⬆️ Uploaded (from memory): ${remoteFileName} → ${remoteFullPath}`);
+      this.logger.log(`   Size: ${contentBuffer.length} bytes`);
+      this.logger.log('✅ File uploaded successfully');
+    } catch (err: any) {
+      this.logger.error(`SFTP upload failed for ${remoteFileName}: ${err.message}`);
+      throw err;
+    } finally {
+      try {
+        await sftp.end();
+        this.logger.debug('SFTP connection closed');
+      } catch {
+        // ignore close errors
+      }
+    }
+  }
+
+  private async uploadFileToSftp(
     localFilePath: string,
     remoteFileName: string,
     remoteFolder: string
