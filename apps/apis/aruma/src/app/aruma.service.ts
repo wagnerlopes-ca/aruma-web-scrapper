@@ -660,6 +660,82 @@ export class ArumaService {
     return csvFilePath;
   }
 
+  async processRemitAdvGenerated(
+    deviceName: string,
+    folder: string,
+    payload: any,
+  ): Promise<string> {
+    // 1. Build filename
+    const timestamp = new Date().toISOString()
+      .replace(/[-:T.]/g, '')
+      .slice(2, 14); // YYMMDDHHmmss
+
+    const fileName = `Remittence_${deviceName}_${timestamp}.csv`;
+
+    const csvFilePath = path.join(folder, fileName);
+
+    // 2. Extract data rows from payload
+    const rows = (payload.response?.remittance_advice || []).map((r: any) => ({
+      payeebp: r.payeebp ?? "",
+      z4no: r.z4no ?? "",
+      finyrs: r.finyrs ?? "",
+      payreqnum: r.payreqnum ?? "",
+      payreqdocdate: r.payreqdocdate ?? "",
+      provclaimref: r.provclaimref ?? "",
+      itemid: r.itemid ?? "",
+      itemqty: r.itemqty ?? "",
+      unitprice: r.unitprice ?? "",
+      amountclaimed: r.amountclaimed ?? "",
+      amountpaid: r.amountpaid ?? "",
+      participantbp: r.participantbp ?? "",
+      participantname: r.participantname ?? "",
+      supportstartdate: r.supportstartdate ?? "",
+      supportenddate: r.supportenddate ?? "",
+      servicebookingnum: r.servicebookingnum ?? "",
+      bulkclmid: r.bulkclmid ?? "",
+      claimtype: r.claimtype ?? "",
+      cancelrsn: r.cancelrsn ?? "",
+    }));
+
+    // 3. Define CSV writer (headers must match CSV order exactly)
+    const csvWriter = createObjectCsvWriter({
+      path: csvFilePath,
+      header: [
+        { id: 'payeebp', title: 'payeebp' },
+        { id: 'z4no', title: 'z4no' },
+        { id: 'finyrs', title: 'finyrs' },
+        { id: 'payreqnum', title: 'payreqnum' },
+        { id: 'payreqdocdate', title: 'payreqdocdate' },
+        { id: 'provclaimref', title: 'provclaimref' },
+        { id: 'itemid', title: 'itemid' },
+        { id: 'itemqty', title: 'itemqty' },
+        { id: 'unitprice', title: 'unitprice' },
+        { id: 'amountclaimed', title: 'amountclaimed' },
+        { id: 'amountpaid', title: 'amountpaid' },
+        { id: 'participantbp', title: 'participantbp' },
+        { id: 'participantname', title: 'participantname' },
+        { id: 'supportstartdate', title: 'supportstartdate' },
+        { id: 'supportenddate', title: 'supportenddate' },
+        { id: 'servicebookingnum', title: 'servicebookingnum' },
+        { id: 'bulkclmid', title: 'bulkclmid' },
+        { id: 'claimtype', title: 'claimtype' },
+        { id: 'cancelrsn', title: 'cancelrsn' },
+      ],
+      alwaysQuote: true,
+    });
+
+    // 4. Write CSV
+    await csvWriter.writeRecords(rows);
+
+    // 5. Upload to SFTP
+    const remitAdvRemoteFolder = 'Remittance'; // ← adjust if needed
+    await this.uploadFileToSftp(csvFilePath, fileName, remitAdvRemoteFolder);
+
+    console.log(`✅ Remittance Advice CSV saved in ${csvFilePath} (${rows.length} rows)`);
+
+    return csvFilePath;
+  }
+
   async processNotification(notificationPayload: any, deviceName: string, eventId: string): Promise<string> {
     try {
       const storagePath = this.configService.get<string>('STORAGE_PATH');
@@ -697,6 +773,10 @@ export class ArumaService {
         await this.generateServiceBookingDetailsAndSupportDetailsPartials(device.deviceName, device.portal, notificationPayload, deviceUser);
       } else if (eventId === 'BULK_PROCESS_FINISH') {
         this.processBulkProcessFinish(deviceName, notificationsFolder, notificationPayload);
+      } else if (eventId === 'REMIT_ADV_GENERATED') {
+        this.processRemitAdvGenerated(deviceName, notificationsFolder, notificationPayload);
+      } else {
+        this.logger.error('Unknown notification received');
       }
     } catch (exception) {
       this.logger.fatal(exception);
