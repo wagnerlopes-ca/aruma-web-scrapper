@@ -166,11 +166,19 @@ export class ArumaService {
         //List with maximum of 5000 items
         const requestBodyList = await this.csvToBulkPaymentPayloads(csvRows);
 
+        const responseList = [];
+
         for (let i = 0; i < requestBodyList.length; i++) {
           const body = requestBodyList[i];
 
-          await this.postPaymentBatch(body, deviceName);
+          const response = await this.postPaymentBatch(body, deviceName);
+
+          this.logger.log(response);
+
+          responseList.push(response);
         }
+
+        return responseList;
       }
     } catch (exception) {
       this.logger.fatal(exception);
@@ -245,7 +253,7 @@ export class ArumaService {
     try {
       const deviceUser = await this.deviceUserService.findOne(deviceName);
 
-      await this.defaultRequest(
+      const response = await this.defaultRequest(
         url,
         method,
         body,
@@ -258,6 +266,11 @@ export class ArumaService {
       );
 
       await this.logBatchSubmission(batchReferenceName);
+
+      return {
+        batch_reference_name: batchReferenceName,
+        response: response
+      };
     } catch (exception) {
       this.logger.fatal(exception);
     }
@@ -633,8 +646,8 @@ export class ArumaService {
     await csvWriter.writeRecords(rows);
 
     // Upload to SFTP if required
-    //const bulkProcessFinishRemoteFolder = 'ClaimsResponse';
-    //this.uploadToSftp(csvFilePath, fileName, bulkProcessFinishRemoteFolder);
+    const bulkProcessFinishRemoteFolder = 'ClaimsResponse';
+    this.uploadToSftp(csvFilePath, fileName, bulkProcessFinishRemoteFolder);
 
     this.markBatchCompleted(payload.batch_reference_name);
 

@@ -89,15 +89,11 @@ export class ArumaController {
   }
 
   //Finops: POST payments batch
-  @UseGuards(AuthBearerGuard)
+  //Removing auth for now to match JB's implementation
+  //@UseGuards(AuthBearerGuard) 
   @Post('/payments/batch')
   async postPaymentsBatch(@Body() body) {
-    this.arumaService.postPaymentsBatchFile(body.FileName);
-
-    return {
-      success: true,
-      result: 'Batch payment process started'
-    }
+    return await this.arumaService.postPaymentsBatchFile(body.FileName);
   }
 
   //Finops: Claim Nudge
