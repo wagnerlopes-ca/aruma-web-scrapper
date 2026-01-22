@@ -47,13 +47,6 @@ export class AuthBasicNotificationGuard implements CanActivate {
       });
     }
 
-    this.logger.log(
-      {
-        message: `Authentication request for ${deviceName}`,
-        request: request
-      }
-    );
-
     return authorized;
   }
 
