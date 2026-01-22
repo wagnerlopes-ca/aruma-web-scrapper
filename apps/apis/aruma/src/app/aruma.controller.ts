@@ -53,6 +53,10 @@ export class ArumaController {
     const eventId = request.headers['event_id'] || request.headers['eventid'];
     const deviceName = params['deviceName'];
 
+    this.logger.log({
+      headers: request.headers,
+    });
+
     this.arumaService.processNotification(body, deviceName, eventId);
 
     //Create a new method in ArumaService to check the report type and handle them as required
