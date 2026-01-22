@@ -91,19 +91,19 @@ export class NDISService implements NDISInterface {
     if (response.ok) {
       const jsonResult = await response.json();
 
-      this.logger.log(
-        `Request Success:
-        Status: ${response.status}.
-        Error list: ${JSON.stringify(jsonResult)}.`,
-      );
+      this.logger.log({
+        success: true,
+        status: response.status,
+        result: jsonResult
+      });
     } else {
       const responseText = await response.text();
 
-      this.logger.error(
-        `Request ERROR!
-            Status: ${response.status}.
-            Error: ${responseText}.`,
-      );
+      this.logger.error({
+        success: false,
+        status: response.status,
+        error: responseText
+      });
     }
   }
 
@@ -142,7 +142,7 @@ export class NDISService implements NDISInterface {
 
     const responseCode = responseClone.status;
 
-    if(responseCode >= 500) {
+    if (responseCode >= 500) {
       this.logger.fatal(
         {
           transactionId: transactionId,

@@ -192,20 +192,32 @@ export class ArumaService {
   public async postPaymentsNudge() {
     const paymentsPending: Array<{
       id: number;
+      device_name: string;
       batch_reference_name: string;
       submitted_at: string;
       status: string;
       completed_at: string | null;
     }> = await this.getAllBatches('pending');
 
-    for (let i = 0; i < paymentsPending?.length; i++) {
-      const element = paymentsPending[i];
+    const resultList = [];
 
-      this.logger.log(element);
+    for (let i = 0; i < paymentsPending?.length; i++) {
+      const payment = paymentsPending[i];
+
+      const result = await this.requestBulkClaimReport(payment.device_name, payment.batch_reference_name);
+
+      const nudgeResult = {
+        payment: payment,
+        result: result
+      }
+
+      resultList.push(nudgeResult);
+
+      this.logger.log(nudgeResult);
     }
 
-    if (paymentsPending?.length > 0) {
-      return paymentsPending;
+    if (resultList?.length > 0) {
+      return resultList;
     } else {
       return {
         success: true,
@@ -269,7 +281,45 @@ export class ArumaService {
         deviceUser
       );
 
-      await this.logBatchSubmission(batchReferenceName);
+      await this.logBatchSubmission(batchReferenceName, deviceName);
+
+      return {
+        batch_reference_name: batchReferenceName,
+        response: response
+      };
+    } catch (exception) {
+      this.logger.fatal(exception);
+    }
+  }
+
+  private async requestBulkClaimReport(deviceName: string, batchReferenceName: string) {
+    const url = '3.0/notifications/report';
+    const method = 'POST';
+    const headers = {
+      "Content-Type": "application/json"
+    };
+    const body = {
+      event_id: 'BULK_CLAIM_REPORT',
+      batch_reference_name: batchReferenceName
+    }
+    const queryObject = null;
+    const clientName = "Aruma";
+    const saveTransaction = false;
+
+    try {
+      const deviceUser = await this.deviceUserService.findOne(deviceName);
+
+      const response = await this.defaultRequest(
+        url,
+        method,
+        body,
+        headers,
+        queryObject,
+        deviceName,
+        clientName,
+        saveTransaction,
+        deviceUser
+      );
 
       return {
         batch_reference_name: batchReferenceName,
@@ -570,9 +620,7 @@ export class ArumaService {
     payload: any,
   ): Promise<string> {
     // 1. Build filename
-    const timestamp = new Date().toISOString()
-      .replace(/[-:T.]/g, '')
-      .slice(2, 14); // YYMMDDHHmmss
+    const timestamp = this.getMelbourneTimestamp();
 
     const fileName = `BulkProcessFinish_${deviceName}_${timestamp}.csv`;
 
@@ -666,9 +714,7 @@ export class ArumaService {
     payload: any,
   ): Promise<string> {
     // 1. Build filename
-    const timestamp = new Date().toISOString()
-      .replace(/[-:T.]/g, '')
-      .slice(2, 14); // YYMMDDHHmmss
+    const timestamp = this.getMelbourneTimestamp();
 
     const fileName = `Remittence_${deviceName}_${timestamp}.csv`;
 
@@ -736,10 +782,14 @@ export class ArumaService {
     return csvFilePath;
   }
 
+  getTodaysFolder() {
+    return new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Melbourne' });
+  }
+
   async processNotification(notificationPayload: any, deviceName: string, eventId: string): Promise<string> {
     try {
       const storagePath = this.configService.get<string>('STORAGE_PATH');
-      const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+      const today = this.getTodaysFolder();
       const dateFolder = path.join(storagePath, today);
       const resultsFolder = path.join(dateFolder, 'results');
       const partialCsvsFolder = path.join(dateFolder, 'partials');
@@ -771,7 +821,7 @@ export class ArumaService {
         await this.saveSBDownloadPartial(deviceName, partialCsvsFolder, notificationPayload, provider);
         await this.generateServiceBookingsListPartial(device.deviceName, device.portal, notificationPayload, deviceUser);
         await this.generateServiceBookingDetailsAndSupportDetailsPartials(device.deviceName, device.portal, notificationPayload, deviceUser);
-      } else if (eventId === 'BULK_PROCESS_FINISH') {
+      } else if (eventId === 'BULK_PROCESS_FINISH' || eventId === 'BULK_CLAIM_REPORT') {
         this.processBulkProcessFinish(deviceName, notificationsFolder, notificationPayload);
       } else if (eventId === 'REMIT_ADV_GENERATED') {
         this.processRemitAdvGenerated(deviceName, notificationsFolder, notificationPayload);
@@ -787,7 +837,7 @@ export class ArumaService {
 
   async generateResultFiles(prefix: string): Promise<string | null> {
     const storagePath = this.configService.get<string>('STORAGE_PATH');
-    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    const today = this.getTodaysFolder();
     const resultsFolder = path.join(storagePath, today, 'results');
     const partialsFolder = path.join(storagePath, today, 'partials');
 
@@ -855,7 +905,7 @@ export class ArumaService {
     this.logger.log(`Processing SB_REPORT for ${deviceName} (${portal})...`);
 
     const storagePath = this.configService.get<string>('STORAGE_PATH');
-    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    const today = this.getTodaysFolder();
     const dateFolder = path.join(storagePath, today);
     const partialsFolder = path.join(dateFolder, 'partials');
 
@@ -987,7 +1037,7 @@ export class ArumaService {
     this.logger.log(`Processing SB_REPORT ServiceBookingDetails for ${deviceName} (${portal})...`);
 
     const storagePath = this.configService.get<string>('STORAGE_PATH');
-    const today = new Date().toISOString().split('T')[0];
+    const today = this.getTodaysFolder();
     const dateFolder = path.join(storagePath, today);
     const partialsFolder = path.join(dateFolder, 'partials');
     //const deviceUser: DeviceUsersDto = await this.deviceUserService.findOne(deviceName);
@@ -1145,7 +1195,7 @@ export class ArumaService {
 
   async clearTodaysResultsFolder() {
     const storagePath = this.configService.get<string>('STORAGE_PATH');
-    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    const today = this.getTodaysFolder();
     const resultsFolder = path.join(storagePath, today, 'results');
 
     try {
@@ -1174,7 +1224,8 @@ export class ArumaService {
 
   private async uploadResultsToSftp(): Promise<void> {
     const storagePath = this.configService.get<string>(EnvConstants.STORAGE_PATH);
-    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    //const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    const today = this.getTodaysFolder();
     const resultsFolder = path.join(storagePath, today, 'results');
 
     const requiredPrefixes = [
@@ -1432,22 +1483,23 @@ export class ArumaService {
     }
   }
 
-  private async logBatchSubmission(batchRef: string): Promise<void> {
-    const now = new Date().toISOString();
-    const stmt = this.db.prepare(`
-      INSERT OR IGNORE INTO batches (batch_reference_name, submitted_at, status)
-      VALUES (?, ?, 'pending')
+  private async logBatchSubmission(batchReferenceName: string, deviceName: string): Promise<void> {
+    const now = new Date().toLocaleString('en-AU', { timeZone: 'Australia/Melbourne' });
+    const insertQuery = this.db.prepare(`
+      INSERT OR IGNORE INTO batches (device_name, batch_reference_name, submitted_at, status)
+      VALUES (?, ?, ?, 'pending')
     `);
 
-    const info = stmt.run(batchRef, now);
+    const info = insertQuery.run(deviceName, batchReferenceName, now);
 
     if (info.changes > 0) {
-      this.logger.log(`Logged new batch: ${batchRef}`);
+      this.logger.log(`Logged new batch: ${batchReferenceName}`);
     }
   }
 
   async getAllBatches(statusFilter?: 'pending' | 'completed'): Promise<Array<{
     id: number;
+    device_name: string;
     batch_reference_name: string;
     submitted_at: string;
     status: string;
@@ -1456,6 +1508,7 @@ export class ArumaService {
     let query = `
       SELECT 
         id,
+        device_name,
         batch_reference_name,
         submitted_at,
         status,
@@ -1477,6 +1530,7 @@ export class ArumaService {
     try {
       const rows = stmt.all(...params) as Array<{
         id: number;
+        device_name: string;
         batch_reference_name: string;
         submitted_at: string;
         status: string;
@@ -1493,8 +1547,22 @@ export class ArumaService {
     }
   }
 
+  getMelbourneTimestamp() {
+    const now = new Date();
+
+    // Format each part in local (Melbourne) time
+    const YY = now.getFullYear().toString().slice(-2);
+    const MM = String(now.getMonth() + 1).padStart(2, '0');
+    const DD = String(now.getDate()).padStart(2, '0');
+    const HH = String(now.getHours()).padStart(2, '0');
+    const mm = String(now.getMinutes()).padStart(2, '0');
+    const ss = String(now.getSeconds()).padStart(2, '0');
+
+    return `${YY}${MM}${DD}${HH}${mm}${ss}`;
+  };
+
   async markBatchCompleted(batchRef: string): Promise<void> {
-    const now = new Date().toISOString();
+    const now = new Date().toLocaleString('en-AU', { timeZone: 'Australia/Melbourne' });
 
     // First check current status (optional but useful for detailed logging)
     const selectStmt = this.db.prepare(`
