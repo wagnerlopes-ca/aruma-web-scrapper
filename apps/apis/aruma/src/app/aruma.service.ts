@@ -183,6 +183,13 @@ export class ArumaService {
         }
 
         return responseList;
+      } else {
+        const error = {
+          success: false,
+          errors: ['Device not found for the Registration Number in the CSV!']
+        }
+        this.logger.error(error);
+        return error;
       }
     } catch (exception) {
       this.logger.fatal(exception);
