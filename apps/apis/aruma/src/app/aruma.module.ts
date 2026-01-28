@@ -38,7 +38,7 @@ import { BatchInitiatorService } from './batch-initiator.service';
             level: 'info', // Or any other config value
             genReqId: () => uuidv4(),
             quietReqLogger: true,
-            timestamp: false,
+            timestamp: () => `,"time":"${new Date(Date.now()).toISOString()}"`,
             singleLine: true,
             autoLogging: false,
             base: undefined,

@@ -47,3 +47,6 @@ Thumbs.db
 
 #Keys
 *.pem
+
+#Other
+test.json

@@ -53,21 +53,11 @@ export class ArumaController {
     const eventId = request.headers['event_id'] || request.headers['eventid'];
     const deviceName = params['deviceName'];
 
-    this.logger.log({
-      headers: request.headers,
-    });
-
     this.arumaService.processNotification(body, deviceName, eventId);
-
-    //Create a new method in ArumaService to check the report type and handle them as required
-    // Expected notifications:
-    // Web Scrapper: SB_REPORT
-    // Finops: BULK_PROCESS_FINISH, BULK_CLAIM_REPORT, REMIT_ADV_GENERATED (These )
 
     this.logger.log(
       {
         message: `Weebhook notification for ${params['deviceName']} was received.`,
-        notificationPayload: body,
         headers: request.headers
       }
     );

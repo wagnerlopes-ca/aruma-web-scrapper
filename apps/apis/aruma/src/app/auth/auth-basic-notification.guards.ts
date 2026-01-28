@@ -78,7 +78,7 @@ export class AuthBasicNotificationGuard implements CanActivate {
     const isAuthorized = checksum.toUpperCase() === hashKey.toUpperCase();
 
     if (!isAuthorized) {
-      this.logger.log(
+      this.logger.error(
         {
           message: `Checksum failed`,
           checksumReceived: checksum.toUpperCase(),
