@@ -269,24 +269,32 @@ export class ArumaService {
     try {
       const deviceUser = await this.deviceUserService.findOne(deviceName);
 
-      const response = await this.defaultRequest(
-        url,
-        method,
-        body,
-        headers,
-        queryObject,
-        deviceName,
-        clientName,
-        saveTransaction,
-        deviceUser
-      );
+      if(deviceUser) {
+        const response = await this.defaultRequest(
+          url,
+          method,
+          body,
+          headers,
+          queryObject,
+          deviceName,
+          clientName,
+          saveTransaction,
+          deviceUser
+        );
+        
+        await this.logBatchSubmission(batchReferenceName, deviceName);
+  
+        return {
+          batch_reference_name: batchReferenceName,
+          response: response
+        };
+      } else {
+        this.logger.error({
+          deviceName: deviceName,
+          message: 'Device not found'
+        })
+      }
 
-      await this.logBatchSubmission(batchReferenceName, deviceName);
-
-      return {
-        batch_reference_name: batchReferenceName,
-        response: response
-      };
     } catch (exception) {
       this.logger.fatal(exception);
     }
