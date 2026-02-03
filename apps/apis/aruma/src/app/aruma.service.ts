@@ -276,7 +276,7 @@ export class ArumaService {
     try {
       const deviceUser = await this.deviceUserService.findOne(deviceName);
 
-      if(deviceUser) {
+      if (deviceUser) {
         const response = await this.defaultRequest(
           url,
           method,
@@ -288,9 +288,9 @@ export class ArumaService {
           saveTransaction,
           deviceUser
         );
-        
+
         await this.logBatchSubmission(batchReferenceName, deviceName);
-  
+
         return {
           batch_reference_name: batchReferenceName,
           response: response
@@ -709,14 +709,19 @@ export class ArumaService {
       alwaysQuote: true
     });
 
-    // 4. Write CSV
-    await csvWriter.writeRecords(rows);
+    try {
 
-    // Upload to SFTP if required
-    const bulkProcessFinishRemoteFolder = 'ClaimsResponse';
-    this.uploadFileToSftp(csvFilePath, fileName, bulkProcessFinishRemoteFolder);
+      // 4. Write CSV
+      await csvWriter.writeRecords(rows);
 
-    this.markBatchCompleted(payload.batch_reference_name);
+      // Upload to SFTP if required
+      const bulkProcessFinishRemoteFolder = 'ClaimsResponse';
+      await this.uploadFileToSftp(csvFilePath, fileName, bulkProcessFinishRemoteFolder);
+
+      await this.markBatchCompleted(payload.batch_reference_name);
+    } catch (e) {
+      this.logger.error(e);
+    }
 
     console.log(`✅ Bulk process finish CSV saved in ${csvFilePath} (${rows.length} rows)`);
 
@@ -785,12 +790,16 @@ export class ArumaService {
       alwaysQuote: true,
     });
 
-    // 4. Write CSV
-    await csvWriter.writeRecords(rows);
+    try {
+      // 4. Write CSV
+      await csvWriter.writeRecords(rows);
 
-    // 5. Upload to SFTP
-    const remitAdvRemoteFolder = 'Remittance'; // ← adjust if needed
-    await this.uploadFileToSftp(csvFilePath, fileName, remitAdvRemoteFolder);
+      // 5. Upload to SFTP
+      const remitAdvRemoteFolder = 'Remittance'; 
+      await this.uploadFileToSftp(csvFilePath, fileName, remitAdvRemoteFolder);
+    } catch (e) {
+      this.logger.error(e);
+    }
 
     console.log(`✅ Remittance Advice CSV saved in ${csvFilePath} (${rows.length} rows)`);
 
@@ -1382,7 +1391,8 @@ export class ArumaService {
       await fs.access(localFilePath, fs.constants.R_OK);
     } catch {
       this.logger.error(`Local file not found or not readable: ${localFilePath}`);
-      throw new Error(`Cannot upload: file not accessible - ${localFilePath}`);
+      return
+      //throw new Error(`Cannot upload: file not accessible - ${localFilePath}`);
     }
 
     // 2. Load SFTP config
