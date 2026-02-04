@@ -29,7 +29,6 @@ export class ArumaController {
   @Get('health-check')
   @HttpCode(204)
   healthCheck() {
-    console.log('Test');
     return 'Working';
   }
 
