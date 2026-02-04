@@ -5,6 +5,7 @@ export class EnvConstants {
   static readonly WEBHOOK_NOTIFICATION_URL: string = 'WEBHOOK_NOTIFICATION_URL';
   static readonly NOTIFICATION_SIGNATURE: string = 'NOTIFICATION_SIGNATURE';
   static readonly NOTIFICATION_BASIC_AUTH: string = 'NOTIFICATION_BASIC_AUTH';
+  static readonly BASIC_AUTH: string = 'BASIC_AUTH';
   static readonly NOTIFICATION_TO_EMAIL_TEST: string =
     'NOTIFICATION_TO_EMAIL_TEST';
   static readonly NOTIFICATION_FROM_EMAIL: string = 'NOTIFICATION_FROM_EMAIL';

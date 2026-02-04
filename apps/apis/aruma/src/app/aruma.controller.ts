@@ -14,6 +14,7 @@ import { ApiTags } from '@nestjs/swagger';
 import { RequestDto } from './dto/request.dto';
 import { AuthBearerGuard } from './auth/auth-bearer.guards';
 import { AuthBasicNotificationGuard } from './auth/auth-basic-notification.guards';
+import { AuthBasicGuard } from './auth/auth-basic.guards';
 import { ArumaService } from './aruma.service';
 
 @Controller()
@@ -84,7 +85,7 @@ export class ArumaController {
 
   //Finops: POST payments batch
   //Removing auth for now to match JB's implementation
-  //@UseGuards(AuthBearerGuard) 
+  @UseGuards(AuthBasicGuard)
   @Post('/payments/batch')
   async postPaymentsBatch(@Body() body) {
     return await this.arumaService.postPaymentsBatchFile(body.FileName);
