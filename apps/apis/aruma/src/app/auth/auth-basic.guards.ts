@@ -21,7 +21,7 @@ export class AuthBasicGuard implements CanActivate {
 
     let authorized = false;
 
-    if (token) { //Non PACE authentication
+    if (token) {
       authorized = this.isTokenAuthorized(token);
     } else {
       this.logger.error(
@@ -36,6 +36,13 @@ export class AuthBasicGuard implements CanActivate {
         }
       );
 
+      throw new UnauthorizedException({
+        success: false,
+        errors: ['Unauthorized!']
+      });
+    }
+
+    if (!authorized) {
       throw new UnauthorizedException({
         success: false,
         errors: ['Unauthorized!']
