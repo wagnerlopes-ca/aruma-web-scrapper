@@ -178,8 +178,12 @@ export class ArumaService {
 
           responseList.push(response);
 
-          const fileName = `PaymentBulkUpload_${sftpFileName}_${response.batch_reference_name}`;
-          this.uploadContentStringToSftp(JSON.stringify(response), fileName, sftpResultFileFolder);
+          const cleanFileName = sftpFileName.endsWith('.csv')
+            ? sftpFileName.slice(0, -4)
+            : sftpFileName;
+
+          const fileName = `PaymentBulkUpload_${cleanFileName}_${response?.batch_reference_name?.toLowerCase()}`;
+          this.uploadContentStringToSftp(JSON.stringify(response?.response), fileName, sftpResultFileFolder);
         }
 
         return responseList;
