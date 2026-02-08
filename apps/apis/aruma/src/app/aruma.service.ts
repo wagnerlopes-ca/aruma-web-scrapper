@@ -846,9 +846,9 @@ export class ArumaService {
       await this.saveReport(deviceName, notificationsFolder, notificationPayload);
 
       if (eventId === 'SB_REPORT') {
-        await this.saveSBDownloadPartial(deviceName, partialCsvsFolder, notificationPayload, provider);
-        await this.generateServiceBookingsListPartial(device.deviceName, device.portal, notificationPayload, deviceUser);
-        await this.generateServiceBookingDetailsAndSupportDetailsPartials(device.deviceName, device.portal, notificationPayload, deviceUser);
+        this.saveSBDownloadPartial(deviceName, partialCsvsFolder, notificationPayload, provider);
+        this.generateServiceBookingsListPartial(device.deviceName, device.portal, notificationPayload, deviceUser);
+        this.generateServiceBookingDetailsAndSupportDetailsPartials(device.deviceName, device.portal, notificationPayload, deviceUser);
       } else if (eventId === 'BULK_PROCESS_FINISH' || eventId === 'BULK_CLAIM_REPORT') {
         this.processBulkProcessFinish(deviceName, notificationsFolder, notificationPayload);
       } else if (eventId === 'REMIT_ADV_GENERATED') {
