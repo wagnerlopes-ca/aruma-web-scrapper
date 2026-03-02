@@ -83,7 +83,6 @@ export class ArumaController {
   }
 
   //Finops: POST payments batch
-  //Removing auth for now to match JB's implementation
   @UseGuards(AuthBasicGuard)
   @Post('/payments/batch')
   async postPaymentsBatch(@Body() body) {

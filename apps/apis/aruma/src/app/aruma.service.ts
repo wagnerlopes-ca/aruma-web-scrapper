@@ -1552,7 +1552,7 @@ export class ArumaService {
       params.push(statusFilter);
     }
 
-    query += ` ORDER BY submitted_at DESC`;
+    query += ` ORDER BY id DESC LIMIT 100`;
 
     const stmt = this.db.prepare(query);
 
