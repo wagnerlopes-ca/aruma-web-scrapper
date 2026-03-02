@@ -569,11 +569,16 @@ export class ArumaService {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
-  async saveReport(deviceName: string, payloadsFolder: string, sbReportPayload: any) {
-    const jsonFilePath = path.join(payloadsFolder, `${sbReportPayload.event_id}_${deviceName}.json`);
+  async saveReport(
+    deviceName: string,
+    payloadsFolder: string, 
+    sbReportPayload: any, 
+    eventId: string
+  ) {
+    const jsonFilePath = path.join(payloadsFolder, `${eventId}_${deviceName}_${this.getMelbourneTimestamp()}.json`);
     await fs.writeFile(jsonFilePath, JSON.stringify(sbReportPayload, null, 2), 'utf-8');
 
-    this.logger.log(`✅ SB_REPORT saved in ${jsonFilePath}`);
+    this.logger.log(`✅ ${eventId} notification saved in ${jsonFilePath}`);
   }
 
   async saveSBDownloadPartial(deviceName: string, partialCsvsFolder: string, sbReportPayload: any, provider: string) {
@@ -843,7 +848,7 @@ export class ArumaService {
       const deviceUser = await this.deviceUserService.findOne(deviceName);
 
       // 4. Save Files
-      await this.saveReport(deviceName, notificationsFolder, notificationPayload);
+      await this.saveReport(deviceName, notificationsFolder, notificationPayload, eventId);
 
       if (eventId === 'SB_REPORT') {
         this.saveSBDownloadPartial(deviceName, partialCsvsFolder, notificationPayload, provider);
