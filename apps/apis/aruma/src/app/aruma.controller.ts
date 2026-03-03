@@ -36,7 +36,7 @@ export class ArumaController {
   @UseGuards(AuthBearerGuard)
   @Post('/request-reports')
   async requestReports() {
-    this.arumaService.requestReports();
+    return await this.arumaService.requestReports();
   }
 
   //Phase 2: 

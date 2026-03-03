@@ -67,6 +67,115 @@ export class ArumaService {
     );
   }
 
+  public async requestSBReport(
+    url: string,
+    method: string,
+    body: object,
+    headers: object,
+    queryObject: object,
+    deviceName: string,
+    clientName: string,
+    saveTransaction: boolean,
+    deviceUser: DeviceUsersDto
+  ): Promise<ResponseDto[]> {
+    const maxAttempts = 3
+    let attempt = 1;
+    const responseList: ResponseDto[] = [];
+
+    while (true) {
+      // Last attempt → throw / return error
+      if (attempt > maxAttempts) {
+        this.logger.fatal({
+          message: `Maximum attempts to get the SB_REPORT achieved for ${deviceName}`,
+          request: { url, method, body, headers, queryObject, deviceName, clientName }
+        });
+
+        //SEND EMAIL TO SLACK CHANNEL HERE
+
+        responseList.push({
+          success: false,
+          result: undefined,
+          errors: [`Maximum attempts to get the SB_REPORT achieved for ${deviceName}`]
+        });
+
+        return responseList;
+      }
+
+      attempt++;
+
+      try {
+        await this.stopIfOutage();
+
+        const response = await this.sendRequest(
+          method,
+          url,
+          headers,
+          body,
+          deviceName,
+          clientName,
+          queryObject,
+          saveTransaction,
+          deviceUser
+        );
+
+        const isOk = response.ok;
+
+        console.log(isOk);
+
+        if (!isOk) {
+          const responseClone = response.clone();
+          let errorList;
+
+          try {
+            errorList = await responseClone.json();
+          } catch {
+            errorList = await response.text();
+          }
+
+          // Retry only on 5xx or network errors
+          if (response.status >= 500 || response.status === 429) {
+            // fall through → will retry if attempts left
+            responseList.push({
+              success: false,
+              result: undefined,
+              errors: errorList,
+            });
+          } else {
+            responseList.push({
+              success: false,
+              result: undefined,
+              errors: errorList,
+            });
+
+            return responseList;
+          }
+        } else {
+          const result = await response.json();
+
+          responseList.push({
+            success: result.success,
+            result: result.result,
+            errors: undefined,
+          });
+
+          return responseList;
+        }
+      } catch (error) {
+        // Network error, timeout, DNS failure, etc → good candidate for retry
+        this.logger.error({
+          message: `Request failed (attempt ${attempt}/${maxAttempts + 1})`,
+          deviceName: deviceName,
+          url,
+          method,
+          error: error.message || error,
+        });
+
+        // Add small delay before next retry
+        await new Promise(resolve => setTimeout(resolve, 400 * attempt)); // 400ms → 800ms → ...
+      }
+    }
+  }
+
   public async defaultRequest(
     url: string,
     method: string,
@@ -529,6 +638,8 @@ export class ArumaService {
   }
 
   async requestReports() {
+    const resultList: any[] = [];
+
     try {
       const url = '3.0/notifications/report';
       const method = 'POST';
@@ -541,11 +652,13 @@ export class ArumaService {
       const devicesListString: string = this.configService.get(EnvConstants.DEVICES_LIST);
       const deviceList: DeviceDto[] = JSON.parse(devicesListString);
 
-      deviceList.forEach(async deviceObject => {
+      for (let i = 0; i < deviceList.length; i++) {
+        const deviceObject = deviceList[i];
+
         try {
           const deviceUser = await this.deviceUserService.findOne(deviceObject.deviceName);
 
-          this.defaultRequest(
+          const response = await this.requestSBReport(
             url,
             method,
             body,
@@ -556,13 +669,20 @@ export class ArumaService {
             saveTransaction,
             deviceUser
           );
+
+          resultList.push({
+            device: deviceObject.deviceName,
+            responses: response
+          });
         } catch (exception) {
           this.logger.fatal(exception);
         }
-      });
+      }
     } catch (exception) {
       this.logger.fatal(exception);
     }
+
+    return resultList;
   }
 
   sleep(ms: number) {
@@ -571,8 +691,8 @@ export class ArumaService {
 
   async saveReport(
     deviceName: string,
-    payloadsFolder: string, 
-    sbReportPayload: any, 
+    payloadsFolder: string,
+    sbReportPayload: any,
     eventId: string
   ) {
     const jsonFilePath = path.join(payloadsFolder, `${eventId}_${deviceName}_${this.getMelbourneTimestamp()}.json`);
@@ -804,7 +924,7 @@ export class ArumaService {
       await csvWriter.writeRecords(rows);
 
       // 5. Upload to SFTP
-      const remitAdvRemoteFolder = 'Remittance'; 
+      const remitAdvRemoteFolder = 'Remittance';
       await this.uploadFileToSftp(csvFilePath, fileName, remitAdvRemoteFolder);
     } catch (e) {
       this.logger.error(e);
