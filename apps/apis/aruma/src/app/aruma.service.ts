@@ -2,7 +2,8 @@ import {
   Injectable,
   Logger,
   HttpException,
-  InternalServerErrorException
+  InternalServerErrorException,
+  HttpStatus
 } from '@nestjs/common';
 import { NDISService } from '@app/ndis';
 import { PlannedOutagesService } from './planned-outages/planned-outages.service';
@@ -22,6 +23,8 @@ import { JwtService } from '@nestjs/jwt';
 import Client from 'ssh2-sftp-client';
 import { Transform } from 'stream';
 import Database from 'better-sqlite3';
+import { PostPaymentsBatchResponseDto } from './dto/post-payments-batch-response.dto';
+import { error } from 'console';
 
 @Injectable()
 export class ArumaService {
@@ -187,125 +190,106 @@ export class ArumaService {
     saveTransaction: boolean,
     deviceUser: DeviceUsersDto
   ): Promise<ResponseDto> {
-    try {
-      //This method will throw an exception in case of outage
-      //and stop the request
-      await this.stopIfOutage();
+    await this.stopIfOutage();
 
-      const response = await this.sendRequest(
-        method,
-        url,
-        headers,
-        body,
-        deviceName,
-        clientName,
-        queryObject,
-        saveTransaction,
-        deviceUser
-      );
+    const response = await this.sendRequest(
+      method,
+      url,
+      headers,
+      body,
+      deviceName,
+      clientName,
+      queryObject,
+      saveTransaction,
+      deviceUser
+    );
 
-      if (!response.ok) {
-        const responseClone = response.clone();
-        let errorList;
+    const isOk = response.ok;
 
-        try {
-          errorList = await responseClone.json();
-        } catch (e) {
-          errorList = await response.text();
-        }
+    console.log(isOk);
 
-        return {
+    if (!isOk) {
+      const statusCode = response.status;
+      let error;
+
+      try {
+        error = await response.json();
+      } catch (e) {
+        error = await response.text();
+      }
+
+      throw new HttpException(
+        {
           success: false,
-          result: undefined,
-          errors: errorList,
-        };
-      }
-
-      const result = await response.json();
-
-      const responseDto = {
-        success: result.success,
-        result: result.result,
-        errors: undefined,
-      };
-
-      return responseDto;
-    } catch (error) {
-      this.logger.error(error);
-
-      const formattedError = await this.formatError(error);
-
-      if (error instanceof HttpException) {
-        throw new HttpException(
-          formattedError,
-          error.getStatus(),
-        );
-      } else {
-        this.logger.fatal(
-          {
-            message: error.message || 'Fatal error in NDIA Middleware',
-            exceptionType: error.constructor.name,
-            errors: [error],
-            request: {
-              url,
-              method,
-              body,
-              headers,
-              queryObject,
-              deviceName,
-              clientName
-            }
-          }
-        );
-      }
+          errors: error
+        },
+        statusCode
+      );
     }
+
+    const result = await response.json();
+
+    const responseDto = {
+      success: result.success,
+      result: result.result,
+      errors: undefined,
+    };
+
+    return responseDto;
   }
 
   public async postPaymentsBatchFile(sftpFileName: string) {
-    try {
-      const sftpClaimFileFolder = 'Claims';
-      const sftpResultFileFolder = 'ClaimsResponse';
+    const sftpClaimFileFolder = 'Claims';
+    const sftpResultFileFolder = 'ClaimsResponse';
 
-      const csvString = await this.downloadFileFromSftp(sftpFileName, sftpClaimFileFolder);
+    const csvString = await this.downloadFileFromSftp(sftpFileName, sftpClaimFileFolder);
 
-      const csvRows: any[] = await this.parseCsvStringIntoArray(csvString);
+    const csvRows: any[] = await this.parseCsvStringIntoArray(csvString);
 
-      const deviceName = this.getDeviceNameFromCsv(csvRows);
+    const deviceName = this.getDeviceNameFromCsv(csvRows);
 
-      if (deviceName) {
-        //List with maximum of 5000 items
-        const requestBodyList = await this.csvToBulkPaymentPayloads(csvRows);
+    if (deviceName) {
+      //List with maximum of 5000 items
+      const requestBodyList = await this.csvToBulkPaymentPayloads(csvRows);
 
-        const responseList = [];
+      const responseList = [];
 
-        for (let i = 0; i < requestBodyList.length; i++) {
-          const body = requestBodyList[i];
+      for (let i = 0; i < requestBodyList.length; i++) {
+        const body = requestBodyList[i];
 
-          const response = await this.postPaymentBatch(body, deviceName);
+        let response;
+        let batchReferenceName;
 
-          this.logger.log(response);
+        try {
+          response = await this.postPaymentBatch(body, deviceName);
 
           responseList.push(response);
+          batchReferenceName = response?.batch_reference_name?.toLowerCase();
+        } catch (e) {
+          this.logger.error(e);
+          response = e.response || e;
 
-          const cleanFileName = sftpFileName.endsWith('.csv')
-            ? sftpFileName.slice(0, -4)
-            : sftpFileName;
-
-          const fileName = `PaymentBulkUpload_${cleanFileName}_${response?.batch_reference_name?.toLowerCase()}`;
-          this.uploadContentStringToSftp(JSON.stringify(response?.response), fileName, sftpResultFileFolder);
+          responseList.push(response);
+          batchReferenceName = 'ERROR.csv';
         }
 
-        return responseList;
-      } else {
-        const error = {
-          success: false,
-          errors: ['Device not found for the Registration Number in the CSV!']
-        }
-        this.logger.error(error);
-        return error;
+        const cleanFileName = sftpFileName.endsWith('.csv')
+          ? sftpFileName.slice(0, -4)
+          : sftpFileName;
+
+        const fileName = `PaymentBulkUpload_${cleanFileName}_${batchReferenceName}`;
+        await this.uploadContentStringToSftp(JSON.stringify(response), fileName, sftpResultFileFolder);
       }
-    } catch (exception) {
-      this.logger.fatal(exception);
+
+      return responseList;
+    } else {
+      const error = {
+        success: false,
+        errors: ['Device not found for the Registration Number in the CSV!']
+      }
+      this.logger.error(error);
+
+      throw new HttpException(error, HttpStatus.BAD_REQUEST);
     }
   }
 
@@ -374,7 +358,7 @@ export class ArumaService {
     return `${YY}${MM}${DD}${HH}${mm}${SS}${mmm}.CSV`;
   }
 
-  private async postPaymentBatch(body: any, deviceName: string) {
+  private async postPaymentBatch(body: any, deviceName: string): Promise<PostPaymentsBatchResponseDto> {
     const url = '4.0/payments/batch';
     const method = 'POST';
     const batchReferenceName = this.getBatchReferenceName();
@@ -386,22 +370,23 @@ export class ArumaService {
     const clientName = "Aruma";
     const saveTransaction = false;
 
-    try {
-      const deviceUser = await this.deviceUserService.findOne(deviceName);
+    // try {
+    const deviceUser = await this.deviceUserService.findOne(deviceName);
 
-      if (deviceUser) {
-        const response = await this.defaultRequest(
-          url,
-          method,
-          body,
-          headers,
-          queryObject,
-          deviceName,
-          clientName,
-          saveTransaction,
-          deviceUser
-        );
+    if (deviceUser) {
+      const response = await this.defaultRequest(
+        url,
+        method,
+        body,
+        headers,
+        queryObject,
+        deviceName,
+        clientName,
+        saveTransaction,
+        deviceUser
+      );
 
+      if (response.success) {
         await this.logBatchSubmission(batchReferenceName, deviceName);
 
         return {
@@ -409,15 +394,19 @@ export class ArumaService {
           response: response
         };
       } else {
-        this.logger.error({
-          deviceName: deviceName,
-          message: 'Device not found'
-        })
+        throw new HttpException(response, HttpStatus.BAD_REQUEST);
       }
-
-    } catch (exception) {
-      this.logger.fatal(exception);
+    } else {
+      this.logger.error({
+        deviceName: deviceName,
+        message: 'Device not found'
+      })
     }
+    // } catch (exception) {
+    //   this.logger.fatal(exception);
+
+    //   return exception;
+    // }
   }
 
   private async requestBulkClaimReport(deviceName: string, batchReferenceName: string) {
@@ -1521,7 +1510,6 @@ export class ArumaService {
     } catch {
       this.logger.error(`Local file not found or not readable: ${localFilePath}`);
       return
-      //throw new Error(`Cannot upload: file not accessible - ${localFilePath}`);
     }
 
     // 2. Load SFTP config
