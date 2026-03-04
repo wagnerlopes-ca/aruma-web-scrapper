@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Delete,
   HttpCode,
   Logger,
   Body,
@@ -87,6 +88,13 @@ export class ArumaController {
   @Post('/payments/batch')
   async postPaymentsBatch(@Body() body) {
     return await this.arumaService.postPaymentsBatchFile(body.FileName);
+  }
+
+  //Finops: DELETE payments batch
+  @UseGuards(AuthBearerGuard)
+  @Delete('/payments/batch/:id')
+  async deletePaymentsBatch(@Param('id') id: number) {
+    return this.arumaService.deleteBatchById(id);
   }
 
   //Finops: Claim Nudge

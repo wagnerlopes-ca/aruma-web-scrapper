@@ -1689,6 +1689,43 @@ export class ArumaService {
     }
   }
 
+  async deleteBatchById(id: number): Promise<{ success: boolean, message: string }> {
+    // Optional: fetch first to log what was deleted
+    const selectStmt = this.db.prepare(`
+      SELECT batch_reference_name FROM batches WHERE id = ?
+    `);
+
+    const row = selectStmt.get(id) as { batch_reference_name: string } | undefined;
+
+    if (!row) {
+      this.logger.debug(`No batch found with id ${id}`);
+      return {
+        success: false,
+        message: `No batch found with id ${id}`
+      };
+    }
+
+    const deleteStmt = this.db.prepare(`
+      DELETE FROM batches WHERE id = ?
+    `);
+
+    const info = deleteStmt.run(id);
+
+    if (info.changes > 0) {
+      this.logger.log(`Deleted batch id ${id} (${row.batch_reference_name})`);
+      return {
+        success: true,
+        message: `Deleted batch id ${id} (${row.batch_reference_name})`
+      };
+    }
+
+    // Shouldn't reach here unless race condition
+    return {
+      success: false,
+      message: `Unknown error, please try again later`
+    };
+  }
+
   getMelbourneTimestamp() {
     const now = new Date();
 
