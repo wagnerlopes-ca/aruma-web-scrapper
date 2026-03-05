@@ -24,7 +24,6 @@ import Client from 'ssh2-sftp-client';
 import { Transform } from 'stream';
 import Database from 'better-sqlite3';
 import { PostPaymentsBatchResponseDto } from './dto/post-payments-batch-response.dto';
-import { error } from 'console';
 
 @Injectable()
 export class ArumaService {
@@ -911,6 +910,25 @@ export class ArumaService {
     try {
       // 4. Write CSV
       await csvWriter.writeRecords(rows);
+
+      // ── Add the weird padding ───────────────────────────────
+      const content = await fs.readFile(csvFilePath, 'utf-8');
+
+      // Split on \n but keep the last empty segment if present
+      const lines = content.split(/\r?\n/);
+
+      // Filter out any already-empty lines at the end, then pad
+      const paddedLines = lines
+        .filter(line => line !== '')           // remove accidental blank lines
+        .map(line => ` ${line} `)              // space before + space after
+        .join('\n');
+
+      // Ensure file ends with exactly one newline after the last padded line
+      const partialContent = paddedLines + '\n ';
+
+      const finalContent = partialContent.slice(1);
+
+      await fs.writeFile(csvFilePath, finalContent, 'utf-8');
 
       // 5. Upload to SFTP
       const remitAdvRemoteFolder = 'Remittance';
