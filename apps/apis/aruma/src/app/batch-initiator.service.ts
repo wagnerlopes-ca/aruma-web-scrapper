@@ -8,9 +8,16 @@ export class BatchInitiatorService {
         private readonly arumaService: ArumaService
     ) { }
 
-    @Cron('0 3 * * *') // Daily at 3 AM
+    @Cron('0 1 * * *') // Daily at 1 AM
     async initiateDailyBatch() {
         this.arumaService.requestReports();
+
+        console.log(`Requesting SB_REPORT notifications!`);
+    }
+
+    @Cron('0 5 * * *') // Daily at 5 AM
+    async checkAndRequestMissingSBReports() {
+        this.arumaService.checkAndRequestMissingSBReports();
 
         console.log(`Requesting SB_REPORT notifications!`);
     }

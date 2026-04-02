@@ -70,16 +70,17 @@ export class ArumaService {
   }
 
   public async requestSBReport(
-    url: string,
-    method: string,
-    body: object,
-    headers: object,
-    queryObject: object,
-    deviceName: string,
-    clientName: string,
-    saveTransaction: boolean,
     deviceUser: DeviceUsersDto
   ): Promise<ResponseDto[]> {
+    const deviceName = deviceUser.DeviceName;
+    const url = '3.0/notifications/report';
+    const method = 'POST';
+    const body = { event_id: "SB_REPORT" }
+    const headers = null;
+    const queryObject = null;
+    const clientName = "Aruma";
+    const saveTransaction = false;
+
     const maxAttempts = 3
     let attempt = 1;
     const responseList: ResponseDto[] = [];
@@ -629,14 +630,6 @@ export class ArumaService {
     const resultList: any[] = [];
 
     try {
-      const url = '3.0/notifications/report';
-      const method = 'POST';
-      const body = { event_id: "SB_REPORT" }
-      const headers = null;
-      const queryObject = null;
-      const clientName = "Aruma";
-      const saveTransaction = false;
-
       const devicesListString: string = this.configService.get(EnvConstants.DEVICES_LIST);
       const deviceList: DeviceDto[] = JSON.parse(devicesListString);
 
@@ -647,14 +640,6 @@ export class ArumaService {
           const deviceUser = await this.deviceUserService.findOne(deviceObject.deviceName);
 
           const response = await this.requestSBReport(
-            url,
-            method,
-            body,
-            headers,
-            queryObject,
-            deviceObject.deviceName,
-            clientName,
-            saveTransaction,
             deviceUser
           );
 
@@ -671,6 +656,80 @@ export class ArumaService {
     }
 
     return resultList;
+  }
+
+  /**
+   * Checks today's notifications folder for SB_REPORT files for each registered device.
+   * If any device is missing its SB_REPORT_*.json file, it requests it via NDIA API.
+   */
+  async checkAndRequestMissingSBReports(): Promise<void> {
+    const storagePath = this.configService.get<string>('STORAGE_PATH');
+    const today = this.getTodaysFolder();
+    const notificationsFolder = path.join(storagePath, today, 'notifications');
+
+    try {
+      // Ensure folder exists
+      await fs.mkdir(notificationsFolder, { recursive: true });
+
+      // 1. Get all files that start with 'SB_REPORT_'
+      const allFiles = await fs.readdir(notificationsFolder);
+      const sbReportFiles = allFiles.filter(file =>
+        file.startsWith('SB_REPORT_') && file.endsWith('.json')
+      );
+
+      this.logger.log(`Found ${sbReportFiles.length} SB_REPORT files for today.`);
+
+      // 2. Get list of registered devices
+      const devicesListString = this.configService.get<string>(EnvConstants.DEVICES_LIST);
+      const devicesList: DeviceDto[] = JSON.parse(devicesListString || '[]');
+
+      if (devicesList.length === 0) {
+        this.logger.warn('No devices configured in DEVICES_LIST');
+        return;
+      }
+
+      const missingDevices: string[] = [];
+
+      // 3. Check if each device has at least one SB_REPORT file
+      for (const device of devicesList) {
+        const deviceName = device.deviceName;
+
+        const hasReport = sbReportFiles.some(file =>
+          file.startsWith(`SB_REPORT_${deviceName}_`)
+        );
+
+        if (!hasReport) {
+          missingDevices.push(deviceName);
+          this.logger.warn(`Missing SB_REPORT for device: ${deviceName}`);
+        } else {
+          this.logger.debug(`SB_REPORT found for device: ${deviceName}`);
+        }
+      }
+
+      // 4. Request missing reports
+      if (missingDevices.length > 0) {
+        this.logger.log(`Requesting SB_REPORT for ${missingDevices.length} missing device(s): ${missingDevices.join(', ')}`);
+
+        for (const deviceName of missingDevices) {
+          try {
+            const deviceUser = await this.deviceUserService.findOne(deviceName);
+
+            const response = await this.requestSBReport(
+              deviceUser
+            );
+
+            this.logger.log(`Successfully requested SB_REPORT for device: ${deviceName}`);
+          } catch (err) {
+            this.logger.error(`Failed to request SB_REPORT for device ${deviceName}: ${err.message}`);
+          }
+        }
+      } else {
+        this.logger.log('✅ All devices have SB_REPORT files for today.');
+      }
+
+    } catch (err: any) {
+      this.logger.error(`Error checking SB_REPORT files: ${err.message}`);
+    }
   }
 
   sleep(ms: number) {
@@ -946,7 +1005,11 @@ export class ArumaService {
     return new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Melbourne' });
   }
 
-  async processNotification(notificationPayload: any, deviceName: string, eventId: string): Promise<string> {
+  async processNotification(
+    notificationPayload: any,
+    deviceName: string,
+    eventId: string
+  ): Promise<string | null> {
     try {
       const storagePath = this.configService.get<string>('STORAGE_PATH');
       const today = this.getTodaysFolder();
@@ -955,44 +1018,89 @@ export class ArumaService {
       const partialCsvsFolder = path.join(dateFolder, 'partials');
       const notificationsFolder = path.join(dateFolder, 'notifications');
 
-      // 1. Ensure the folder exists
+      // 1. Ensure folders exist
       await fs.mkdir(dateFolder, { recursive: true });
       await fs.mkdir(resultsFolder, { recursive: true });
       await fs.mkdir(partialCsvsFolder, { recursive: true });
       await fs.mkdir(notificationsFolder, { recursive: true });
 
-      // 2. Parse devices list from env
-      const devicesListString: string =
-        this.configService.get<string>('DEVICES_LIST');
+      // 2. Parse devices list
+      const devicesListString: string = this.configService.get<string>('DEVICES_LIST');
       const devicesList: DeviceDto[] = JSON.parse(devicesListString || '[]');
 
-      // 3. Determine provider based on deviceName (event_id)
-      const device = devicesList.find(
-        (d) => d.deviceName === deviceName
-      );
+      const device = devicesList.find(d => d.deviceName === deviceName);
       const provider = device?.provider ?? '';
 
       const deviceUser = await this.deviceUserService.findOne(deviceName);
 
-      // 4. Save Files
+      // 3. Checks if there is already a SB_REPORT for the device for the day
+      const sbReportAlreadyExists = await this.sbReportAlreadyExists(deviceName);
+
+      // 4. ALWAYS save the raw notification (as per your requirement)
       await this.saveReport(deviceName, notificationsFolder, notificationPayload, eventId);
 
+      // 5. Process based on event type with duplicate protection for SB_REPORT
       if (eventId === 'SB_REPORT') {
+        if (sbReportAlreadyExists) {
+          this.logger.log(`Skipping further processing for SB_REPORT from device ${deviceName} (already processed today)`);
+          return null;
+        }
+
+        // Only process if it's the first SB_REPORT for this device today
         this.saveSBDownloadPartial(deviceName, partialCsvsFolder, notificationPayload, provider);
         this.generateServiceBookingsListPartial(device.deviceName, device.portal, notificationPayload, deviceUser);
-        this.generateServiceBookingDetailsAndSupportDetailsPartials(device.deviceName, device.portal, notificationPayload, deviceUser);
+        this.generateServiceBookingDetailsAndSupportDetailsPartials(
+          device.deviceName,
+          device.portal,
+          notificationPayload,
+          deviceUser
+        );
+
+        this.logger.log(`Processed SB_REPORT for device ${deviceName}`);
       } else if (eventId === 'BULK_PROCESS_FINISH' || eventId === 'BULK_CLAIM_REPORT') {
         this.processBulkProcessFinish(deviceName, notificationsFolder, notificationPayload);
       } else if (eventId === 'REMIT_ADV_GENERATED') {
         this.processRemitAdvGenerated(deviceName, notificationsFolder, notificationPayload);
       } else {
-        this.logger.error('Unknown notification received');
+        this.logger.error(`Unknown event_id received: ${eventId}`);
       }
+
     } catch (exception) {
       this.logger.fatal(exception);
     }
 
     return null;
+  }
+
+  /**
+  * Checks if there is already at least one SB_REPORT file for the given device today.
+  * Returns true if a file exists, false otherwise.
+  */
+  private async sbReportAlreadyExists(deviceName: string): Promise<boolean> {
+    try {
+      const storagePath = this.configService.get<string>('STORAGE_PATH');
+      const today = this.getTodaysFolder();
+      const notificationsFolder = path.join(storagePath, today, 'notifications');
+
+      // Ensure folder exists (in case it's the first run of the day)
+      await fs.mkdir(notificationsFolder, { recursive: true });
+
+      const files = await fs.readdir(notificationsFolder);
+
+      const exists = files.some(file =>
+        file.startsWith(`SB_REPORT_${deviceName}_`) &&
+        file.endsWith('.json')
+      );
+
+      if (exists) {
+        this.logger.log(`SB_REPORT already exists for device ${deviceName} today. Skipping processing.`);
+      }
+
+      return exists;
+    } catch (err: any) {
+      this.logger.error(`Error checking SB_REPORT existence for ${deviceName}: ${err.message}`);
+      return false; // safer to process than to fail completely
+    }
   }
 
   async generateResultFiles(prefix: string): Promise<string | null> {
