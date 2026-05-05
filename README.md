@@ -36,7 +36,7 @@ To install the local environment execute theses steps:
 
 1. Clone the repo
    ```sh
-   git clone https://github.com/careaccess/nodejs-middleware.git
+   git clone https://github.com/wagnerlopes-ca/aruma-web-scrapper.git
    ```
 2. Install NPM packages in root folder in projet (nodejs-middleware)
    ```sh
