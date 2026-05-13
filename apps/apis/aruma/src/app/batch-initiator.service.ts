@@ -29,7 +29,7 @@ export class BatchInitiatorService {
         console.log(`Initiating process of creating result files and upload to the SFTP server!`);
     }
 
-    @Cron('0 18 * * *') // Daily at 06:00 PM (18:00)
+    @Cron('0 20 * * *') // Daily at 08:00 PM (20:00)
     async nudgeClaims() {
         this.arumaService.postPaymentsNudge();
 
