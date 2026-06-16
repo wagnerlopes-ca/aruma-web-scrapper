@@ -14,7 +14,7 @@ import { EnvConstants } from '../env/env-constants';
 
 async function bootstrap() {
   const app = await NestFactory.create(ArumaModule, {
-    logger: [],
+    logger: ['error', 'warn', 'log'],
     bufferLogs: true,
   });
 
@@ -61,7 +61,10 @@ async function buildSwagger(app: INestApplication, apiVersion: string) {
   SwaggerModule.setup(`aruma/:version/docs`, app, document);
 }
 
-bootstrap();
+bootstrap().catch((error) => {
+  console.error('Failed to start application:', error);
+  process.exit(1);
+});
 function configureLogLevels(envLogLevels: string): LogLevel[] {
   let logLevels: LogLevel[] = [];
 

@@ -17,9 +17,13 @@ export class BatchInitiatorService {
 
     @Cron('0 5 * * *') // Daily at 5 AM
     async checkAndRequestMissingSBReports() {
-        this.arumaService.checkAndRequestMissingSBReports();
+        // 1) Check for missing SB_REPORT notifications
+        // 1.1) If there are missing notifications:
+        //     1.1.1) If the subscription is not active: resubscribe to all notifications
+        //     1.1.2) Request the missing SB_REPORT notifications
+        await this.arumaService.checkAndRequestMissingSBReports();
 
-        console.log(`Requesting SB_REPORT notifications!`);
+        console.log(`Finished checking and requesting SB_REPORT notifications.`);
     }
 
     @Cron('0 10 * * *') // Daily at 10:00 AM

@@ -1,7 +1,7 @@
 {
   "$schema": "./node_modules/nx/schemas/nx-schema.json",
   "affected": {
-    "defaultBase": "master"
+    "defaultBase": "main"
   },
   "targetDefaults": {
     "build": {
@@ -46,5 +46,6 @@
     ],
     "sharedGlobals": []
   },
-  "neverConnectToCloud": true
+  "neverConnectToCloud": true,
+  "analytics": true
 }

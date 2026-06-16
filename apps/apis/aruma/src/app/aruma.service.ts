@@ -14,6 +14,7 @@ import { DeviceUsersService } from './device-users/device-users.service';
 import { EnvConstants } from '../../env/env-constants';
 import * as path from 'path';
 import { promises as fs } from 'fs';
+import { mkdirSync } from 'fs';
 import { format } from 'date-fns';
 import { createObjectCsvWriter } from 'csv-writer';
 import csvParser from 'csv-parser';
@@ -24,6 +25,8 @@ import Client from 'ssh2-sftp-client';
 import { Transform } from 'stream';
 import Database from 'better-sqlite3';
 import { PostPaymentsBatchResponseDto } from './dto/post-payments-batch-response.dto';
+import { NotificationsService } from './notifications/notifications.service';
+import { SubscribeToNotificationDto } from './dto/subscribe-to-notification.dto';
 
 @Injectable()
 export class ArumaService {
@@ -39,7 +42,8 @@ export class ArumaService {
     private readonly ndisService: NDISService,
     private readonly plannedOutagesService: PlannedOutagesService,
     private readonly configService: ConfigService,
-    private readonly deviceUserService: DeviceUsersService
+    private readonly deviceUserService: DeviceUsersService,
+    private readonly notificationsService: NotificationsService
   ) {
     this.initializeDbConnection();
   }
@@ -658,9 +662,135 @@ export class ArumaService {
     return resultList;
   }
 
+  private readonly REQUIRED_NOTIFICATION_EVENTS = [
+    'REMIT_ADV_GENERATED',
+    'BULK_PROCESS_FINISH',
+    'BULK_CLAIM_REPORT',
+    'SB_REPORT',
+  ];
+
+  private async getNotificationSubscriptions(
+    deviceUser: DeviceUsersDto
+  ): Promise<string[]> {
+    const response = await this.defaultRequest(
+      '3.0/notifications',
+      'GET',
+      null,
+      null,
+      null,
+      deviceUser.DeviceName,
+      'Aruma',
+      false,
+      deviceUser
+    );
+
+    const subscriptions = response.result as Array<{ event_id: string }> | undefined;
+    return (subscriptions ?? []).map((subscription) => subscription.event_id);
+  }
+
+  private isNotificationSubscriptionActive(subscribedEventIds: string[]): boolean {
+    return this.REQUIRED_NOTIFICATION_EVENTS.every((eventId) =>
+      subscribedEventIds.includes(eventId)
+    );
+  }
+
+  private async subscribeToNotification(
+    deviceUser: DeviceUsersDto,
+    eventId: string,
+    frequency: string
+  ): Promise<ResponseDto> {
+    await this.stopIfOutage();
+
+    const body = await this.notificationsService.getNotificationSubscriptionBody(
+      eventId,
+      frequency,
+      deviceUser.DeviceName
+    );
+
+    return await this.defaultRequest(
+      '3.0/notifications/subscribe',
+      'POST',
+      body,
+      null,
+      null,
+      deviceUser.DeviceName,
+      'Aruma',
+      false,
+      deviceUser
+    );
+  }
+
+  private async subscribeToAllNotifications(deviceUser: DeviceUsersDto): Promise<void> {
+    const allNotifications: SubscribeToNotificationDto[] = JSON.parse(
+      this.configService.get(EnvConstants.ALL_NOTIFICATIONS) || '[]'
+    );
+
+    if (allNotifications.length === 0) {
+      this.logger.warn('ALL_NOTIFICATIONS environment variable is empty or not configured');
+      return;
+    }
+
+    this.logger.log(
+      `Subscribing to ${allNotifications.length} notifications for device: ${deviceUser.DeviceName}`
+    );
+
+    for (const notification of allNotifications) {
+      try {
+        await this.subscribeToNotification(
+          deviceUser,
+          notification.event_id,
+          notification.frequency
+        );
+
+        this.logger.debug(
+          `Subscribed to ${notification.event_id} (${notification.frequency}) for device: ${deviceUser.DeviceName}`
+        );
+      } catch (err: any) {
+        const errorDetail = err?.response?.errors ?? err.message;
+        this.logger.warn(
+          `Failed to subscribe to ${notification.event_id} for device ${deviceUser.DeviceName} (may already be subscribed): ${JSON.stringify(errorDetail)}`
+        );
+      }
+    }
+
+    this.logger.log(
+      `Finished subscribing to all notifications for device: ${deviceUser.DeviceName}`
+    );
+  }
+
+  async checkSubscriptionsAndResubscribeIfNecessary(deviceUser: DeviceUsersDto): Promise<void> {
+    try {
+      await this.stopIfOutage();
+
+      const subscribedEventIds = await this.getNotificationSubscriptions(deviceUser);
+
+      if (this.isNotificationSubscriptionActive(subscribedEventIds)) {
+        this.logger.debug(
+          `Device ${deviceUser.DeviceName} has all required notification subscriptions.`
+        );
+        return;
+      }
+
+      const missingEvents = this.REQUIRED_NOTIFICATION_EVENTS.filter(
+        (eventId) => !subscribedEventIds.includes(eventId)
+      );
+
+      this.logger.warn(
+        `Device ${deviceUser.DeviceName} is missing notification subscriptions: ${missingEvents.join(', ')}`
+      );
+
+      await this.subscribeToAllNotifications(deviceUser);
+    } catch (err: any) {
+      this.logger.error(
+        `Failed to check/resubscribe notifications for device ${deviceUser.DeviceName}: ${err.message}`
+      );
+    }
+  }
+
   /**
    * Checks today's notifications folder for SB_REPORT files for each registered device.
-   * If any device is missing its SB_REPORT_*.json file, it requests it via NDIA API.
+   * If any device is missing its SB_REPORT file, verifies notification subscriptions
+   * and resubscribes if needed before requesting the report via NDIA API.
    */
   async checkAndRequestMissingSBReports(): Promise<void> {
     const storagePath = this.configService.get<string>('STORAGE_PATH');
@@ -706,21 +836,26 @@ export class ArumaService {
         }
       }
 
-      // 4. Request missing reports
+      // 4. Resubscribe if needed, then request missing reports
       if (missingDevices.length > 0) {
         this.logger.log(`Requesting SB_REPORT for ${missingDevices.length} missing device(s): ${missingDevices.join(', ')}`);
 
         for (const deviceName of missingDevices) {
           try {
             const deviceUser = await this.deviceUserService.findOne(deviceName);
-
-            const response = await this.requestSBReport(
-              deviceUser
+            
+            if(deviceUser) {
+              await this.checkSubscriptionsAndResubscribeIfNecessary(deviceUser);
+              await this.requestSBReport(deviceUser);
+              
+              this.logger.log(`Successfully requested SB_REPORT for device: ${deviceName}`);
+            } else {
+              this.logger.error(`Device user not found for device: ${deviceName}`);
+            }
+          } catch (err: any) {
+            this.logger.error(
+              `Failed to process missing SB_REPORT for device ${deviceName}: ${err.message}`
             );
-
-            this.logger.log(`Successfully requested SB_REPORT for device: ${deviceName}`);
-          } catch (err) {
-            this.logger.error(`Failed to request SB_REPORT for device ${deviceName}: ${err.message}`);
           }
         }
       } else {
@@ -1734,9 +1869,11 @@ export class ArumaService {
 
   private initializeDbConnection(): void {
     const storagePath = this.configService.get<string>(EnvConstants.STORAGE_PATH);
-    const dbPath = path.join(storagePath, 'batches', 'batches.sqlite');
+    const dbDir = path.join(storagePath, 'batches');
+    const dbPath = path.join(dbDir, 'batches.sqlite');
 
     try {
+      mkdirSync(dbDir, { recursive: true });
       this.db = new Database(dbPath, {});
 
       // Apply pragmas every time (safe & idempotent)

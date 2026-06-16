@@ -51,6 +51,7 @@ describe('NDIAMiddlewareService', () => {
           provide: NotificationsService,
           useValue: {
             defaultRequest: jest.fn(),
+            getNotificationSubscriptionBody: jest.fn(),
           },
         },
         {

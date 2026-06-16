@@ -23,6 +23,8 @@ import { BatchInitiatorService } from './batch-initiator.service';
   imports: [
     ConfigModule.forRoot({
       validate: validateMethod,
+      envFilePath: 'apps/apis/aruma/src/app/.env',
+      isGlobal: true,
     }),
     PlannedOutagesModule,
     NDISModule,
