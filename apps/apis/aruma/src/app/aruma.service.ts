@@ -125,11 +125,7 @@ export class ArumaService {
           deviceUser
         );
 
-        const isOk = response.ok;
-
-        console.log(isOk);
-
-        if (!isOk) {
+        if (!response.ok) {
           const responseClone = response.clone();
           let errorList;
 
@@ -208,11 +204,7 @@ export class ArumaService {
       deviceUser
     );
 
-    const isOk = response.ok;
-
-    console.log(isOk);
-
-    if (!isOk) {
+    if (!response.ok) {
       const statusCode = response.status;
       let error;
 
