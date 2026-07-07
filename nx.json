@@ -46,5 +46,6 @@
     ],
     "sharedGlobals": []
   },
-  "neverConnectToCloud": true
+  "neverConnectToCloud": true,
+  "analytics": true
 }

@@ -9,6 +9,8 @@ export class EnvConstants {
   static readonly NOTIFICATION_TO_EMAIL_TEST: string =
     'NOTIFICATION_TO_EMAIL_TEST';
   static readonly NOTIFICATION_FROM_EMAIL: string = 'NOTIFICATION_FROM_EMAIL';
+  static readonly EMAIL_TO: string = 'EMAIL_TO';
+  static readonly AWS_REGION: string = 'AWS_REGION';
   static readonly AUTH_BEARER_SECRET: string = 'AUTH_BEARER_SECRET';
   static readonly AUTH_BEARER_EXPIRES_IN_TIME_TOKEN_BEARER: string =
     'AUTH_BEARER_EXPIRES_IN_TIME_TOKEN_BEARER';

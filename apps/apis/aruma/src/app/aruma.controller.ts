@@ -47,6 +47,13 @@ export class ArumaController {
     return await this.arumaService.checkAndRequestMissingSBReports();
   }
 
+  //Phase 1: Request SB_REPORT by device
+  @UseGuards(AuthBearerGuard)
+  @Post('/check-missing-reports')
+  async checkMissingSBReportsAndNotifyTeamIfMissing() {
+    return await this.arumaService.checkMissingSBReportsAndNotifyTeamIfMissing();
+  }
+
   //Phase 2: 
   //   Receives notification from the NDIS,
   //   request remaining data and

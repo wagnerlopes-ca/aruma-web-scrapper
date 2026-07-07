@@ -7,9 +7,12 @@ import { ConfigService } from '@nestjs/config';
 @Injectable()
 export class SESEmailService implements EmailService {
   private readonly logger = new Logger(SESEmailService.name);
-  private client = new SESClient({ region: "ap-southeast-2" });
+  private client: SESClient;
 
-  constructor(private configService: ConfigService) { }
+  constructor(private configService: ConfigService) {
+    const region = this.configService.get('AWS_REGION') || 'ap-southeast-2';
+    this.client = new SESClient({ region });
+  }
 
   private createSendEmailCommand(
     toAddresses: string[],
@@ -64,10 +67,11 @@ export class SESEmailService implements EmailService {
     );
 
     try {
-      this.client.send(sendEmailCommand);
+      await this.client.send(sendEmailCommand);
       this.logger.log(`Email message sent to AWS SES - ${toAddresses}`);
     } catch (e) {
       this.logger.error(`Error to send email message - ${e.message}`);
+      throw e;
     }
   }
 

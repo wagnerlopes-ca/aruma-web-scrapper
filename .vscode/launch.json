@@ -12,22 +12,22 @@
         "--require",
         "ts-node/register",
         "--require",
-        "tsconfig-paths/register",
+        "tsconfig-paths/register"
       ],
       "cwd": "${workspaceRoot}",
       "internalConsoleOptions": "openOnSessionStart",
-      "envFile": "${workspaceFolder}/apps/apis/aruma/.env",
+      "envFile": "${workspaceFolder}/apps/apis/aruma/src/app/.env",
       "env": {
         "NODE_ENV": "local",
         "NODE_PORT": "3000",
-        "TS_NODE_PROJECT": "apps/apis/aruma/tsconfig.app.json", // Specify the tsconfig to use
+        "TS_NODE_PROJECT": "apps/apis/aruma/tsconfig.app.json"
       },
       "sourceMaps": true,
       "console": "internalConsole",
       "outputCapture": "std",
       "resolveSourceMapLocations": [
         "${workspaceFolder}/**",
-        "!**/node_modules/**" // Disable the "could not read source map" error for node_modules
+        "!**/node_modules/**"
       ]
     }
   ]

@@ -3,6 +3,7 @@
  * This is only a minimal backend to get started.
  */
 
+import './load-env';
 import { INestApplication, LogLevel, VersioningType } from '@nestjs/common';
 import bodyParser from 'body-parser';
 import { NestFactory } from '@nestjs/core';

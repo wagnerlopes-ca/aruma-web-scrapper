@@ -24,6 +24,7 @@ import Client from 'ssh2-sftp-client';
 import { Transform } from 'stream';
 import Database from 'better-sqlite3';
 import { PostPaymentsBatchResponseDto } from './dto/post-payments-batch-response.dto';
+import { SESEmailService } from '@app/email-service/ses-email-service.service';
 
 @Injectable()
 export class ArumaService {
@@ -39,7 +40,8 @@ export class ArumaService {
     private readonly ndisService: NDISService,
     private readonly plannedOutagesService: PlannedOutagesService,
     private readonly configService: ConfigService,
-    private readonly deviceUserService: DeviceUsersService
+    private readonly deviceUserService: DeviceUsersService,
+    private readonly sesEmailService: SESEmailService
   ) {
     this.initializeDbConnection();
   }
@@ -658,78 +660,155 @@ export class ArumaService {
     return resultList;
   }
 
+  private async getMissingSBReportDevices(): Promise<{
+    today: string;
+    missingDevices: string[];
+  }> {
+    const storagePath = this.configService.get<string>(EnvConstants.STORAGE_PATH);
+    const today = this.getTodaysFolder();
+    const notificationsFolder = path.join(storagePath, today, 'notifications');
+
+    await fs.mkdir(notificationsFolder, { recursive: true });
+
+    const allFiles = await fs.readdir(notificationsFolder);
+    const sbReportFiles = allFiles.filter(
+      (file) => file.startsWith('SB_REPORT_') && file.endsWith('.json')
+    );
+
+    this.logger.log(`Found ${sbReportFiles.length} SB_REPORT files for today.`);
+
+    const devicesListString = this.configService.get<string>(EnvConstants.DEVICES_LIST);
+    const devicesList: DeviceDto[] = JSON.parse(devicesListString || '[]');
+
+    if (devicesList.length === 0) {
+      this.logger.warn('No devices configured in DEVICES_LIST');
+      return { today, missingDevices: [] };
+    }
+
+    const missingDevices: string[] = [];
+
+    for (const device of devicesList) {
+      const deviceName = device.deviceName;
+      const hasReport = sbReportFiles.some((file) =>
+        file.startsWith(`SB_REPORT_${deviceName}_`)
+      );
+
+      if (!hasReport) {
+        missingDevices.push(deviceName);
+        this.logger.warn(`Missing SB_REPORT for device: ${deviceName}`);
+      } else {
+        this.logger.debug(`SB_REPORT found for device: ${deviceName}`);
+      }
+    }
+
+    return { today, missingDevices };
+  }
+
   /**
    * Checks today's notifications folder for SB_REPORT files for each registered device.
    * If any device is missing its SB_REPORT_*.json file, it requests it via NDIA API.
    */
   async checkAndRequestMissingSBReports(): Promise<void> {
-    const storagePath = this.configService.get<string>('STORAGE_PATH');
-    const today = this.getTodaysFolder();
-    const notificationsFolder = path.join(storagePath, today, 'notifications');
-
     try {
-      // Ensure folder exists
-      await fs.mkdir(notificationsFolder, { recursive: true });
+      const { missingDevices } = await this.getMissingSBReportDevices();
 
-      // 1. Get all files that start with 'SB_REPORT_'
-      const allFiles = await fs.readdir(notificationsFolder);
-      const sbReportFiles = allFiles.filter(file =>
-        file.startsWith('SB_REPORT_') && file.endsWith('.json')
-      );
-
-      this.logger.log(`Found ${sbReportFiles.length} SB_REPORT files for today.`);
-
-      // 2. Get list of registered devices
-      const devicesListString = this.configService.get<string>(EnvConstants.DEVICES_LIST);
-      const devicesList: DeviceDto[] = JSON.parse(devicesListString || '[]');
-
-      if (devicesList.length === 0) {
-        this.logger.warn('No devices configured in DEVICES_LIST');
-        return;
-      }
-
-      const missingDevices: string[] = [];
-
-      // 3. Check if each device has at least one SB_REPORT file
-      for (const device of devicesList) {
-        const deviceName = device.deviceName;
-
-        const hasReport = sbReportFiles.some(file =>
-          file.startsWith(`SB_REPORT_${deviceName}_`)
-        );
-
-        if (!hasReport) {
-          missingDevices.push(deviceName);
-          this.logger.warn(`Missing SB_REPORT for device: ${deviceName}`);
-        } else {
-          this.logger.debug(`SB_REPORT found for device: ${deviceName}`);
-        }
-      }
-
-      // 4. Request missing reports
       if (missingDevices.length > 0) {
-        this.logger.log(`Requesting SB_REPORT for ${missingDevices.length} missing device(s): ${missingDevices.join(', ')}`);
+        this.logger.log(
+          `Requesting SB_REPORT for ${missingDevices.length} missing device(s): ${missingDevices.join(', ')}`
+        );
 
         for (const deviceName of missingDevices) {
           try {
             const deviceUser = await this.deviceUserService.findOne(deviceName);
-
-            const response = await this.requestSBReport(
-              deviceUser
-            );
-
+            await this.requestSBReport(deviceUser);
             this.logger.log(`Successfully requested SB_REPORT for device: ${deviceName}`);
-          } catch (err) {
-            this.logger.error(`Failed to request SB_REPORT for device ${deviceName}: ${err.message}`);
+          } catch (err: any) {
+            this.logger.error(
+              `Failed to request SB_REPORT for device ${deviceName}: ${err.message}`
+            );
           }
         }
       } else {
         this.logger.log('✅ All devices have SB_REPORT files for today.');
       }
-
     } catch (err: any) {
       this.logger.error(`Error checking SB_REPORT files: ${err.message}`);
     }
+  }
+
+  /**
+   * Checks today's notifications folder for SB_REPORT files for each registered device.
+   * Sends an alert email to the team when any device is still missing its SB_REPORT.
+   */
+  async checkMissingSBReportsAndNotifyTeamIfMissing(): Promise<void> {
+    try {
+      const { today, missingDevices } = await this.getMissingSBReportDevices();
+
+      if (missingDevices.length === 0) {
+        this.logger.log('✅ All devices have SB_REPORT files for today. No alert email sent.');
+        return;
+      }
+
+      await this.sendMissingSBReportAlertEmail(today, missingDevices);
+    } catch (err: any) {
+      this.logger.error(`Error checking SB_REPORT files for team alert: ${err.message}`);
+    }
+  }
+
+  private async sendMissingSBReportAlertEmail(
+    today: string,
+    missingDevices: string[]
+  ): Promise<void> {
+    const emailTo = this.configService.get<string>(EnvConstants.EMAIL_TO);
+
+    if (!emailTo?.trim()) {
+      this.logger.error('EMAIL_TO is not configured. Cannot send missing SB_REPORT alert.');
+      return;
+    }
+
+    const toAddresses = emailTo
+      .split(',')
+      .map((email) => email.trim())
+      .filter(Boolean);
+
+    if (toAddresses.length === 0) {
+      this.logger.error('EMAIL_TO is empty after parsing. Cannot send missing SB_REPORT alert.');
+      return;
+    }
+
+    const fromAddress = this.configService.get<string>(EnvConstants.NOTIFICATION_FROM_EMAIL);
+
+    if (!fromAddress?.trim()) {
+      this.logger.error(
+        'NOTIFICATION_FROM_EMAIL is not configured. Cannot send missing SB_REPORT alert.'
+      );
+      return;
+    }
+
+    const subject = `Aruma - Missing SB_REPORT notifications (${today})`;
+    const deviceListHtml = missingDevices.map((device) => `<li>${device}</li>`).join('');
+    const emailMessage = `
+      <p>Hi Team,</p>
+      <p>The Aruma batch process detected missing <strong>SB_REPORT</strong> notifications for the following device(s) on <strong>${today}</strong> (Australia/Melbourne):</p>
+      <ul>${deviceListHtml}</ul>
+      <p>These devices did not receive an SB_REPORT notification file in today's notifications folder, even after the automatic re-request at 5 AM.</p>
+      <p>Please investigate NDIA notification subscriptions and webhook delivery for the affected device(s).</p>
+      <hr>
+      <p><em>This is an automated alert from the Aruma web scrapper.</em></p>
+    `;
+
+    await this.sesEmailService.sendEmail(
+      toAddresses,
+      fromAddress,
+      emailMessage,
+      subject,
+      [],
+      []
+    );
+
+    this.logger.log(
+      `Missing SB_REPORT alert email sent to: ${toAddresses.join(', ')} for device(s): ${missingDevices.join(', ')}`
+    );
   }
 
   sleep(ms: number) {

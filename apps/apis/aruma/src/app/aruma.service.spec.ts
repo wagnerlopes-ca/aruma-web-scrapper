@@ -5,6 +5,7 @@ import { NDISService } from '@app/ndis';
 import { NotificationsService } from './notifications/notifications.service';
 import { PlannedOutagesService } from './planned-outages/planned-outages.service';
 import { DeviceUsersService } from './device-users/device-users.service';
+import { SESEmailService } from '@app/email-service/ses-email-service.service';
 import { ConfigModule } from '@nestjs/config';
 import { Module } from '@nestjs/common';
 
@@ -57,6 +58,12 @@ describe('NDIAMiddlewareService', () => {
           provide: DeviceUsersService,
           useValue: {
             findOne: jest.fn(),
+          },
+        },
+        {
+          provide: SESEmailService,
+          useValue: {
+            sendEmail: jest.fn(),
           },
         }
       ],
