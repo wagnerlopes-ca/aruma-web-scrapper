@@ -1,7 +1,9 @@
+import { existsSync } from 'fs';
 import { config } from 'dotenv';
 import { resolve } from 'path';
 
-config({
-  path: resolve(process.cwd(), 'apps/apis/aruma/src/app/.env'),
-  quiet: true,
-});
+const envPath = resolve(process.cwd(), 'apps/apis/aruma/src/app/.env');
+
+if (existsSync(envPath)) {
+  config({ path: envPath });
+}
