@@ -59,7 +59,12 @@ export function encryptField(
 
   const aesKey = deriveAesKey(key);
   const iv = randomBytes(IV_LEN);
-  const cipher = createCipheriv('aes-256-gcm', aesKey, iv);
+  // Uint8Array wrappers avoid Buffer/ArrayBufferLike TS conflicts across @types/node versions.
+  const cipher = createCipheriv(
+    'aes-256-gcm',
+    new Uint8Array(aesKey),
+    new Uint8Array(iv),
+  );
   const ciphertext = Buffer.concat([
     cipher.update(value, 'utf8'),
     cipher.final(),
@@ -96,10 +101,15 @@ export function decryptField(
   const ciphertext = packed.subarray(IV_LEN + AUTH_TAG_LEN);
 
   try {
-    const decipher = createDecipheriv('aes-256-gcm', deriveAesKey(key), iv);
-    decipher.setAuthTag(authTag);
+    // Uint8Array wrappers avoid Buffer/ArrayBufferLike TS conflicts across @types/node versions.
+    const decipher = createDecipheriv(
+      'aes-256-gcm',
+      new Uint8Array(deriveAesKey(key)),
+      new Uint8Array(iv),
+    );
+    decipher.setAuthTag(new Uint8Array(authTag));
     return Buffer.concat([
-      decipher.update(ciphertext),
+      decipher.update(new Uint8Array(ciphertext)),
       decipher.final(),
     ]).toString('utf8');
   } catch {
