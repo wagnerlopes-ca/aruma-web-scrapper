@@ -53,6 +53,10 @@ class EnvironmentVariables {
   @IsString()
   @IsNotEmpty()
   PARTICIPANTS_SYNC_BATCH_SIZE: string;
+
+  @IsString()
+  @IsNotEmpty()
+  DB_FIELD_ENCRYPTION_KEY: string;
 }
 
 export function validateMethod(config: Record<string, unknown>) {

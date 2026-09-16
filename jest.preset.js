@@ -1,3 +1,8 @@
+const path = require('path');
 const nxPreset = require('@nx/jest/preset').default;
 
-module.exports = { ...nxPreset, coverageReporters: ['html', 'lcov'] };
+module.exports = {
+  ...nxPreset,
+  setupFiles: [path.join(__dirname, 'jest.setup-env.cjs')],
+  coverageReporters: ['html', 'lcov'],
+};

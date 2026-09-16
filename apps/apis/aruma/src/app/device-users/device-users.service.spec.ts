@@ -1,11 +1,17 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { DeviceUsersService } from './device-users.service';
+import { FieldCryptoService } from '@app/database/crypto/field-crypto.service';
 
 const mockDeviceUsersRepository = {
   create: jest.fn(),
   findOne: jest.fn(),
   update: jest.fn(),
   destroy: jest.fn(),
+};
+
+const mockFieldCrypto = {
+  encrypt: jest.fn((value: string | null | undefined) => value ?? null),
+  decrypt: jest.fn((value: string | null | undefined) => value ?? null),
 };
 
 describe('DeviceUsersService', () => {
@@ -18,6 +24,10 @@ describe('DeviceUsersService', () => {
         {
           provide: 'DEVICE_USERS_REPOSITORY',
           useValue: mockDeviceUsersRepository,
+        },
+        {
+          provide: FieldCryptoService,
+          useValue: mockFieldCrypto,
         },
       ],
     }).compile();
@@ -49,6 +59,7 @@ describe('DeviceUsersService', () => {
       );
 
       expect(result).toEqual(mockDeviceUser);
+      expect(mockFieldCrypto.decrypt).toHaveBeenCalled();
     });
   });
 });

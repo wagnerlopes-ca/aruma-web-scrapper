@@ -4,4 +4,6 @@ export class EnvConstants {
   static readonly DATABASE_USERNAME: string = 'DATABASE_USERNAME';
   static readonly DATABASE_PASSWORD: string = 'DATABASE_PASSWORD';
   static readonly DATABASE_NAME: string = 'DATABASE_NAME';
+  /** AES key for DeviceUsers sensitive columns at rest (must match middleware). */
+  static readonly DB_FIELD_ENCRYPTION_KEY: string = 'DB_FIELD_ENCRYPTION_KEY';
 }

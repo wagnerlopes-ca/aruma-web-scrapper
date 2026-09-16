@@ -2,6 +2,7 @@ import {
   Inject,
   Injectable
 } from '@nestjs/common';
+import { FieldCryptoService } from '@app/database/crypto/field-crypto.service';
 import { DeviceUsers } from '@app/database/entities/device-users.entity';
 import { DeviceUsersDto } from './dto/device-users.dto';
 import { DeviceTransformerDto } from '../dto/transformer/device-users-transformer.dto';
@@ -11,6 +12,7 @@ export class DeviceUsersService {
   constructor(
     @Inject('DEVICE_USERS_REPOSITORY')
     private deviceUsersRepository: typeof DeviceUsers,
+    private readonly fieldCrypto: FieldCryptoService,
   ) { }
 
   async findOne(deviceName: string): Promise<DeviceUsersDto> {
@@ -21,6 +23,11 @@ export class DeviceUsersService {
     });
 
     if(deviceUser) {
+      deviceUser.Certificate = this.fieldCrypto.decrypt(deviceUser.Certificate);
+      deviceUser.Token = this.fieldCrypto.decrypt(deviceUser.Token);
+      deviceUser.WebhookBasicAuth = this.fieldCrypto.decrypt(
+        deviceUser.WebhookBasicAuth,
+      );
       const deviceUsersDto = DeviceTransformerDto.toDeviceUserDto(deviceUser);
       return deviceUsersDto;
     }
@@ -64,7 +71,7 @@ export class DeviceUsersService {
     return await this.deviceUsersRepository.update(
       {
         WebhookUrl: webhook,
-        WebhookBasicAuth: basicAuth
+        WebhookBasicAuth: this.fieldCrypto.encrypt(basicAuth)
       },
       {
         where: {
@@ -80,7 +87,7 @@ export class DeviceUsersService {
   ) {
     return await this.deviceUsersRepository.update(
       {
-        WebhookBasicAuth: basicAuth
+        WebhookBasicAuth: this.fieldCrypto.encrypt(basicAuth)
       },
       {
         where: {

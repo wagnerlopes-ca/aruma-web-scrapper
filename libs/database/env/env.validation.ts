@@ -29,6 +29,10 @@ class EnvironmentVariables {
   @IsString()
   @IsNotEmpty()
   DATABASE_NAME: string;
+
+  @IsString()
+  @IsNotEmpty()
+  DB_FIELD_ENCRYPTION_KEY: string;
 }
 
 export function validateMethod(config: Record<string, unknown>) {
