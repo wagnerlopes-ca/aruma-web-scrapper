@@ -29,9 +29,31 @@ export function isEncryptedField(value: string | null | undefined): boolean {
   return typeof value === 'string' && value.startsWith(FIELD_ENCRYPTION_PREFIX);
 }
 
-function deriveAesKey(secret: string): Buffer {
-  return Buffer.from(
-    hkdfSync('sha256', secret, HKDF_SALT, HKDF_INFO, AES_KEY_LEN),
+/**
+ * Avoid Buffer.concat / Buffer↔Uint8Array assignability issues across
+ * TypeScript + @types/node versions (ArrayBuffer vs ArrayBufferLike).
+ */
+function concatBytes(...parts: Uint8Array[]): Uint8Array {
+  const total = parts.reduce((n, part) => n + part.length, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const part of parts) {
+    out.set(part, offset);
+    offset += part.length;
+  }
+  return out;
+}
+
+function toBytes(value: Uint8Array | Buffer): Uint8Array {
+  // Always copy so TS sees a plain Uint8Array, not Node's Buffer subtype.
+  return new Uint8Array(value);
+}
+
+function deriveAesKey(secret: string): Uint8Array {
+  return toBytes(
+    Buffer.from(
+      hkdfSync('sha256', secret, HKDF_SALT, HKDF_INFO, AES_KEY_LEN),
+    ),
   );
 }
 
@@ -58,20 +80,15 @@ export function encryptField(
   }
 
   const aesKey = deriveAesKey(key);
-  const iv = randomBytes(IV_LEN);
-  // Uint8Array wrappers avoid Buffer/ArrayBufferLike TS conflicts across @types/node versions.
-  const cipher = createCipheriv(
-    'aes-256-gcm',
-    new Uint8Array(aesKey),
-    new Uint8Array(iv),
+  const iv = toBytes(randomBytes(IV_LEN));
+  const cipher = createCipheriv('aes-256-gcm', aesKey, iv);
+  const ciphertext = concatBytes(
+    toBytes(cipher.update(value, 'utf8')),
+    toBytes(cipher.final()),
   );
-  const ciphertext = Buffer.concat([
-    cipher.update(value, 'utf8'),
-    cipher.final(),
-  ]);
-  const packed = Buffer.concat([iv, cipher.getAuthTag(), ciphertext]);
+  const packed = concatBytes(iv, toBytes(cipher.getAuthTag()), ciphertext);
 
-  return FIELD_ENCRYPTION_PREFIX + packed.toString('base64');
+  return FIELD_ENCRYPTION_PREFIX + Buffer.from(packed).toString('base64');
 }
 
 /**
@@ -88,9 +105,8 @@ export function decryptField(
     return value;
   }
 
-  const packed = Buffer.from(
-    value.slice(FIELD_ENCRYPTION_PREFIX.length),
-    'base64',
+  const packed = toBytes(
+    Buffer.from(value.slice(FIELD_ENCRYPTION_PREFIX.length), 'base64'),
   );
   if (packed.length < IV_LEN + AUTH_TAG_LEN) {
     decryptFailed();
@@ -101,17 +117,17 @@ export function decryptField(
   const ciphertext = packed.subarray(IV_LEN + AUTH_TAG_LEN);
 
   try {
-    // Uint8Array wrappers avoid Buffer/ArrayBufferLike TS conflicts across @types/node versions.
     const decipher = createDecipheriv(
       'aes-256-gcm',
-      new Uint8Array(deriveAesKey(key)),
-      new Uint8Array(iv),
+      deriveAesKey(key),
+      iv,
     );
-    decipher.setAuthTag(new Uint8Array(authTag));
-    return Buffer.concat([
-      decipher.update(new Uint8Array(ciphertext)),
-      decipher.final(),
-    ]).toString('utf8');
+    decipher.setAuthTag(authTag);
+    const plain = concatBytes(
+      toBytes(decipher.update(ciphertext)),
+      toBytes(decipher.final()),
+    );
+    return Buffer.from(plain).toString('utf8');
   } catch {
     decryptFailed();
   }
