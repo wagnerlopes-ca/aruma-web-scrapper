@@ -1844,7 +1844,10 @@ export class ArumaService {
     }
   }
 
-  async getAllBatches(statusFilter?: 'pending' | 'completed'): Promise<Array<{
+  async getAllBatches(
+    statusFilter?: 'pending' | 'completed',
+    limit?: number | string,
+  ): Promise<Array<{
     id: number;
     device_name: string;
     batch_reference_name: string;
@@ -1852,6 +1855,8 @@ export class ArumaService {
     status: string;
     completed_at: string | null;
   }>> {
+    const resolvedLimit = this.resolveBatchListLimit(limit);
+
     let query = `
       SELECT 
         id,
@@ -1870,11 +1875,11 @@ export class ArumaService {
       params.push(statusFilter);
     }
 
-    query += ` ORDER BY id DESC LIMIT 100`;
-
-    const stmt = this.db.prepare(query);
-
+    query += ` ORDER BY id DESC LIMIT ?`;
+    params.push(resolvedLimit);
+    
     try {
+      const stmt = this.db.prepare(query);
       const rows = stmt.all(...params) as Array<{
         id: number;
         device_name: string;
@@ -1885,13 +1890,95 @@ export class ArumaService {
       }>;
 
       this.logger.debug(`Retrieved ${rows.length} batches` +
-        (statusFilter ? ` (status: ${statusFilter})` : ''));
+        (statusFilter ? ` (status: ${statusFilter})` : '') +
+        ` (limit: ${resolvedLimit})`);
 
       return rows;
     } catch (err: any) {
       this.logger.error(`Failed to fetch batches: ${err.message}`);
       throw err;
     }
+  }
+
+  async getBatchByReferenceName(batchReferenceName: string): Promise<{
+    success: boolean;
+    message?: string;
+    batch?: {
+      id: number;
+      device_name: string;
+      batch_reference_name: string;
+      submitted_at: string;
+      status: string;
+      completed_at: string | null;
+    };
+  }> {
+    if (!batchReferenceName?.trim()) {
+      return {
+        success: false,
+        message: 'batch_reference_name is required',
+      };
+    }
+
+    const stmt = this.db.prepare(`
+      SELECT
+        id,
+        device_name,
+        batch_reference_name,
+        submitted_at,
+        status,
+        completed_at
+      FROM batches
+      WHERE batch_reference_name = ?
+         OR lower(batch_reference_name) = lower(?)
+      ORDER BY id DESC
+      LIMIT 1
+    `);
+
+    try {
+      const row = stmt.get(
+        batchReferenceName,
+        batchReferenceName,
+      ) as {
+        id: number;
+        device_name: string;
+        batch_reference_name: string;
+        submitted_at: string;
+        status: string;
+        completed_at: string | null;
+      } | undefined;
+
+      if (!row) {
+        this.logger.debug(`No batch found for reference: ${batchReferenceName}`);
+        return {
+          success: false,
+          message: `No batch found for reference: ${batchReferenceName}`,
+        };
+      }
+
+      return {
+        success: true,
+        batch: row,
+      };
+    } catch (err: any) {
+      this.logger.error(`Failed to fetch batch by reference: ${err.message}`);
+      throw err;
+    }
+  }
+
+  private resolveBatchListLimit(limit?: number | string): number {
+    const DEFAULT_LIMIT = 100;
+    const MAX_LIMIT = 1000;
+
+    if (limit == null || limit === '') {
+      return DEFAULT_LIMIT;
+    }
+
+    const parsed = typeof limit === 'number' ? limit : Number.parseInt(String(limit), 10);
+    if (!Number.isFinite(parsed) || parsed < 1) {
+      return DEFAULT_LIMIT;
+    }
+
+    return Math.min(parsed, MAX_LIMIT);
   }
 
   async deleteBatchById(id: number): Promise<{ success: boolean, message: string }> {

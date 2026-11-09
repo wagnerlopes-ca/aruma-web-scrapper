@@ -8,7 +8,8 @@ import {
   Body,
   UseGuards,
   Req,
-  Param
+  Param,
+  Query,
 } from '@nestjs/common';
 
 import { ApiTags } from '@nestjs/swagger';
@@ -90,11 +91,20 @@ export class ArumaController {
     this.arumaService.createResultFilesAndUpload();
   }
 
-  //Finops: GET payments batch
+  //Finops: GET payments batch (optional limit; default 100, max 1000)
   @UseGuards(AuthBearerGuard)
   @Get('/payments/batch')
-  async getPaymentsBatch() {
-    return this.arumaService.getAllBatches();
+  async getPaymentsBatch(@Query('limit') limit?: string) {
+    return this.arumaService.getAllBatches(undefined, limit);
+  }
+
+  //Finops: GET payments batch by batch_reference_name
+  @UseGuards(AuthBearerGuard)
+  @Get('/payments/batch/by-reference')
+  async getPaymentsBatchByReference(
+    @Query('batch_reference_name') batchReferenceName: string,
+  ) {
+    return this.arumaService.getBatchByReferenceName(batchReferenceName);
   }
 
   //Finops: POST payments batch
